@@ -13,11 +13,12 @@ try:
 except ImportError:
     psutil = None
 
-#todo reverse complement berücksichtigen
-#todo Parameter des skript anpassbar machen (argparse)
+#todo reverse complement berücksichtigen (evtl reverse comp schon mit in db schreiben)
 
-#todo timing analyse anzahl seq/ länge sequenz woran hängt es länger
 #todo mit trfinder vergleichen
+#todo stresstest mit 1 mo seq und hardware berücksichtigen
+
+#todo einspeichern von motiven wenn sie zwei mal in einer sequenz vorkommen (auch wenn sie nicht periodisch sind)
 
 def _get_available_memory_bytes() -> int:
     """
@@ -87,7 +88,7 @@ def fasta_in_chunks(fasta_path: str,
         yield chunk
 
 
-def equal_fasta_chunks(path, chunk_size=64):
+def equal_fasta_chunks(path, chunk_size=5000):
     with open(path) as handle:
         records = SeqIO.parse(handle, "fasta")
         while True:
@@ -138,10 +139,8 @@ def statistical_repeats(base_tuple, seq_str: str, seq_id, min_repeats, max_repea
             if min_repeats <= occurrences <= max_repeats:
                 end = start + period * occurrences
                 motif = str(canonical_dna_motif(seq_str[start:start + period]))
-                if end <= len(seq_str) and len(motif) >= motive_size:
-                    repeats.append((seq_id, motif, period, occurrences))
-                else:
-                    print("zu kurzes motiv")
+                if end <= len(seq_str):
+                    repeats.append((seq_id, motif, period, occurrences, canonical_dna_motif(reverse_complement(motif))))
     return repeats
 
 def calculate_difference(ll, motive_size):
@@ -310,13 +309,14 @@ def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = 
     cur.execute("SELECT motif, "
                 "SUM(repeat) AS total_repeats, "
                 "COUNT(seq_number) AS occurrences, "
-                "ROUND(SUM(repeat) * 1.0 / SUM(SUM(repeat)) OVER (), 2) AS proportion " 
+                "ROUND(SUM(repeat) * 1.0 / SUM(SUM(repeat)) OVER (), 2) AS proportion, " 
+                "reverse_comp "
                 "FROM repeats GROUP BY motif ORDER BY total_repeats DESC")
     rows = cur.fetchall()
 
     with open(output_path, "w", encoding="utf-8") as f:
         # header
-        f.write("motif\ttotal_repeats\toccurrences\tproportion\n")
+        f.write("motif\ttotal_repeats\toccurrences\tproportion\treverse_comp\n")
         for row in rows:
             f.write("\t".join(str(col) for col in row) + "\n")
 
@@ -344,6 +344,7 @@ if __name__ == "__main__":
         motif text NOT NULL,
         period integer NOT NULL,
         repeat integer NOT NULL,
+        reverse_comp text NOT NULL,
         UNIQUE (seq_number, motif))
     """)
 
@@ -355,14 +356,15 @@ if __name__ == "__main__":
         cur = conn.cursor()
         futures = []
         print("Processing FASTA in chunks...")
-        for chunk in equal_fasta_chunks(args.fasta):
+#        for chunk in equal_fasta_chunks(args.fasta):
+        for chunk in fasta_in_chunks(args.fasta):
             lightweight = [(rec.id, str(rec.seq)) for rec in chunk]
             futures.append(executor.submit(worker_process_chunk, lightweight, args.min_repeats, args.max_repeats, args.motive_size))
 
             for future in as_completed(futures):
                 rows = future.result()
                 if rows:
-                    cur.executemany("INSERT OR IGNORE INTO repeats VALUES (?,?,?,?)", rows)
+                    cur.executemany("INSERT OR IGNORE INTO repeats VALUES (?,?,?,?,?)", rows)
                     conn.commit()
 
     print("Writing results to " + args.output + "...")
