@@ -306,17 +306,41 @@ def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = 
         conn = db
 
     cur = conn.cursor()
-    cur.execute("SELECT motif, "
+    #cur.execute("SELECT motif, " "SUM(repeat) AS total_repeats, " "COUNT(seq_number) AS occurrences, " "ROUND(SUM(repeat) * 1.0 / SUM(SUM(repeat)) OVER (), 2) AS proportion, " "reverse_comp " "FROM repeats GROUP BY motif ORDER BY total_repeats DESC")
+    cur.execute("WITH aggregated AS ("
+                "SELECT motif, "
                 "SUM(repeat) AS total_repeats, "
                 "COUNT(seq_number) AS occurrences, "
-                "ROUND(SUM(repeat) * 1.0 / SUM(SUM(repeat)) OVER (), 2) AS proportion, " 
+                "ROUND(SUM(repeat) * 1.0 / SUM(SUM(repeat)) OVER (), 2) AS proportion, "
                 "reverse_comp "
-                "FROM repeats GROUP BY motif ORDER BY total_repeats DESC")
+                "FROM repeats "
+                "GROUP BY motif, reverse_comp"
+            "), paired AS ("
+                "SELECT a.motif, "
+                "a.total_repeats, "
+                "a.occurrences, "
+                "a.proportion, "
+                "a.reverse_comp, "
+                "b.motif AS rc_motif, "
+                "b.total_repeats AS rc_total_repeats, "
+                "b.occurrences AS rc_occurrences, "
+                "b.proportion AS rc_proportion, "
+                "(a.total_repeats + COALESCE(b.total_repeats, 0)) AS combined_repeats "
+                "FROM aggregated a "
+                "LEFT JOIN aggregated b ON a.reverse_comp = b.motif "
+                "WHERE a.reverse_comp IS NOT NULL   AND (a.total_repeats > COALESCE(b.total_repeats, 0) OR (a.total_repeats = COALESCE(b.total_repeats, 0) AND a.motif < b.motif))"
+            ") "
+            "SELECT *, "
+            "ROUND(combined_repeats * 1.0 / SUM(combined_repeats) OVER (), 2) "
+            "AS combined_proportion "
+            "FROM paired "
+            "ORDER BY combined_proportion DESC")
+
     rows = cur.fetchall()
 
     with open(output_path, "w", encoding="utf-8") as f:
         # header
-        f.write("motif\ttotal_repeats\toccurrences\tproportion\treverse_comp\n")
+        f.write("motif\trepeats\toccurrences\tproportion\treverse_comp\trev_comp\trev_comp\trepeats\toccurrences\tproportion\ttotal_repeats\ttotal_proportions\n")
         for row in rows:
             f.write("\t".join(str(col) for col in row) + "\n")
 
