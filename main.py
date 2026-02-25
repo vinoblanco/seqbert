@@ -13,13 +13,6 @@ try:
 except ImportError:
     psutil = None
 
-#todo reverse complement berücksichtigen (evtl reverse comp schon mit in db schreiben)
-
-#todo mit trfinder vergleichen
-#todo stresstest mit 1 mo seq und hardware berücksichtigen
-
-#todo einspeichern von motiven wenn sie zwei mal in einer sequenz vorkommen (auch wenn sie nicht periodisch sind)
-
 def _get_available_memory_bytes() -> int:
     """
     Gibt den verfügbaren RAM in Bytes zurück. Bevorzuge psutil, wenn installiert,
@@ -41,7 +34,7 @@ def _get_available_memory_bytes() -> int:
 
 def fasta_in_chunks(fasta_path: str,
                     max_ram_mb: int = None,
-                    ram_fraction: float = 0.5,
+                    ram_fraction: float = 0.15,
                     avg_bytes_per_base: float = 1.5) -> Iterator[List]:
     """
     Gibt Listen von SeqRecord Objekten zurück, die nach verfügbarem RAM dimensioniert sind.
@@ -321,7 +314,7 @@ def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = 
                 "a.occurrences, "
                 "a.proportion, "
                 "a.reverse_comp, "
-                "b.motif AS rc_motif, "
+                #"b.motif AS rc_motif, "
                 "b.total_repeats AS rc_total_repeats, "
                 "b.occurrences AS rc_occurrences, "
                 "b.proportion AS rc_proportion, "
@@ -340,7 +333,7 @@ def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = 
 
     with open(output_path, "w", encoding="utf-8") as f:
         # header
-        f.write("motif\trepeats\toccurrences\tproportion\treverse_comp\trev_comp\trev_comp\trepeats\toccurrences\tproportion\ttotal_repeats\ttotal_proportions\n")
+        f.write("motif\trepeats\toccurrences\tproportion\treverse_comp\trev_comp\trepeats\toccurrences\tproportion\ttotal_repeats\ttotal_proportions\n")
         for row in rows:
             f.write("\t".join(str(col) for col in row) + "\n")
 
@@ -375,21 +368,46 @@ if __name__ == "__main__":
     cur.execute("CREATE INDEX idx_motif ON repeats (motif)")
     conn.commit()
 
-    with ProcessPoolExecutor(max_workers=4) as executor:
-        conn = sqlite3.connect(tmp.name)
-        cur = conn.cursor()
-        futures = []
-        print("Processing FASTA in chunks...")
-#        for chunk in equal_fasta_chunks(args.fasta):
-        for chunk in fasta_in_chunks(args.fasta):
-            lightweight = [(rec.id, str(rec.seq)) for rec in chunk]
-            futures.append(executor.submit(worker_process_chunk, lightweight, args.min_repeats, args.max_repeats, args.motive_size))
+    MAX_IN_FLIGHT = 8  # e.g., 2x number of workers
 
-            for future in as_completed(futures):
-                rows = future.result()
+    with ProcessPoolExecutor(max_workers=4) as executor:
+        print("Processing FASTA in chunks...")
+
+        futures = set()
+
+        for chunk in equal_fasta_chunks(args.fasta):
+        #for chunk in fasta_in_chunks(args.fasta):
+            lightweight = [(rec.id, str(rec.seq)) for rec in chunk]
+
+            future = executor.submit(
+                worker_process_chunk,
+                lightweight,
+                args.min_repeats,
+                args.max_repeats,
+                args.motive_size,
+            )
+            futures.add(future)
+
+            if len(futures) >= MAX_IN_FLIGHT:
+                done = next(as_completed(futures))
+                futures.remove(done)
+
+                rows = done.result()
                 if rows:
-                    cur.executemany("INSERT OR IGNORE INTO repeats VALUES (?,?,?,?,?)", rows)
-                    conn.commit()
+                    cur.executemany(
+                        "INSERT OR IGNORE INTO repeats VALUES (?,?,?,?,?)",
+                        rows,
+                    )
+
+        for future in as_completed(futures):
+            rows = future.result()
+            if rows:
+                cur.executemany(
+                    "INSERT OR IGNORE INTO repeats VALUES (?,?,?,?,?)",
+                    rows,
+                )
+
+        conn.commit()
 
     print("Writing results to " + args.output + "...")
     write_repeats_to_txt(conn, args.output)
