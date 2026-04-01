@@ -124,17 +124,20 @@ def statistical_repeats(base_tuple, seq_str: str, seq_id, min_repeats, max_repea
     :return: ein Array mit den gefundenen Repeats und deren Eigenschaften (Seq_ID, Motiv, Start, Periode, Anzahl)
     """
     repeats = []
+    # create a per-sequence coverage map to avoid reporting the same region multiple times
+    covered = bytearray(len(seq_str))
     for key, value in base_tuple.items():
-        #überspringt zu kurze oder leere Dictionary Einträge
+        # überspringt zu kurze oder leere Dictionary Einträge
         if value is None or value.lenght() < min_repeats:
             continue
-        for start, period, occurrences in calculate_motif_repeat_in_sequence(value, seq_str, motive_size):
+        for start, period, occurrences in calculate_motif_repeat_in_sequence(value, seq_str, motive_size, covered):
             if min_repeats <= occurrences <= max_repeats:
                 end = start + period * occurrences
                 motif = str(canonical_dna_motif(seq_str[start:start + period]))
                 if end <= len(seq_str):
                     repeats.append((seq_id, motif, period, occurrences, canonical_dna_motif(reverse_complement(motif))))
     return repeats
+
 
 def calculate_difference(ll, motive_size):
     """
@@ -170,12 +173,14 @@ def calculate_difference(ll, motive_size):
     if counter:
         yield counter, start
 
-def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int):
+def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int, covered: bytearray):
     """
     Findet Motive in der Sequenz anhand der Linked List mit den Vorkommen eines Basentupels
+    Vermeidet Bereiche, die bereits als Teil eines gefundenen Repeats markiert wurden.
     :param ll: Linked List mit den Vorkommen des Basentupels
     :param seq_str: die Sequenz als String
     :param motive_size: mindest Motivgröße
+    :param covered: bytearray, markiert Indizes, die bereits von einem gefundenen Repeat abgedeckt sind
     :return: wann das Vorkommen startet (start), die Periode (period) und wie oft es auftritt (occurrences)
     """
     run_period = None
@@ -184,59 +189,91 @@ def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int):
     run_motif = None
 
     for n, n1 in ll.pairwise():
-        current = n1.data - n.data
-
-        #Abbruchbedingung für zu kurze Motive
-        if current < motive_size:
+        # Wenn eine der beiden Positionen bereits betrachtet wurde überspringen
+        if covered[n.data] or covered[n1.data]:
+            # Wenn bereits ein Run besteht, diesen beenden und neuen beginnen
             if run_period is not None and run_occurrences >= 2:
-                yield run_start, run_period, run_occurrences
+                start = run_start
+                end = run_start + run_period * run_occurrences
+                # Wenn der Run in einen bereits betrachteten Teil der Sequenz beinhaltet, yielden und markieren
+                if not any(covered[i] for i in range(start, min(end, len(covered)))):
+                    for i in range(start, min(end, len(covered))):
+                        covered[i] = 1
+                    yield run_start, run_period, run_occurrences
             run_period = None
             run_start = None
             run_occurrences = 1
             run_motif = None
             continue
 
-        #extrahiere Motive zum Vergleichen
+        current = n1.data - n.data
+
+        # Abbruchbedingung für zu kurze Motive
+        if current < motive_size:
+            if run_period is not None and run_occurrences >= 2:
+                start = run_start
+                end = run_start + run_period * run_occurrences
+                if not any(covered[i] for i in range(start, min(end, len(covered)))):
+                    for i in range(start, min(end, len(covered))):
+                        covered[i] = 1
+                    yield run_start, run_period, run_occurrences
+            run_period = None
+            run_start = None
+            run_occurrences = 1
+            run_motif = None
+            continue
+
+        # extrahiere Motive zum Vergleichen
         motif_n = seq_str[n.data:n.data + current]
         motif_n1 = seq_str[n1.data:n1.data + current]
 
-        #Abbruchbedingung für unvollständige Motive am Ende der Sequenz
+        # Abbruchbedingung für unvollständige Motive am Ende der Sequenz
         if len(motif_n) != current or len(motif_n1) != current:
             if run_period is not None and run_occurrences >= 2:
-                yield run_start, run_period, run_occurrences
+                start = run_start
+                end = run_start + run_period * run_occurrences
+                if not any(covered[i] for i in range(start, min(end, len(covered)))):
+                    for i in range(start, min(end, len(covered))):
+                        covered[i] = 1
+                    yield run_start, run_period, run_occurrences
             run_period = None
             run_start = None
             run_occurrences = 1
             run_motif = None
             continue
 
-        #Wenn noch kein Run aktiv ist
+        # Wenn noch kein Run aktiv ist
         if run_period is None:
-            #Starte neuen Run, wenn Motive übereinstimmen
+            # Starte neuen Run, wenn Motive übereinstimmen
             if motif_n == motif_n1:
                 run_period = current
                 run_start = n.data
                 run_occurrences = 2
                 run_motif = motif_n
-            #Setze Werte zurück, wenn kein Run gestartet werden kann
+            # Setze Werte zurück, wenn kein Run gestartet werden kann
             else:
                 run_period = None
                 run_start = None
                 run_occurrences = 1
                 run_motif = None
 
-        #Wenn bereits ein Run aktiv ist
+        # Wenn bereits ein Run aktiv ist
         else:
-            #Run fortsetzen, wenn Periode und Motiv übereinstimmen
+            # Run fortsetzen, wenn Periode und Motiv übereinstimmen
             if current == run_period and motif_n1 == run_motif:
                 run_occurrences += 1
 
-            #Run beenden und neuen Run starten, wenn die folgenden Motive übereinstimmt
+            # Run beenden und neuen Run starten, wenn die folgenden Motive übereinstimmt
             else:
-                #Run beenden
+                # Run beenden
                 if run_occurrences >= 2:
-                    yield run_start, run_period, run_occurrences
-                #neuer Run, falls Motive übereinstimmen
+                    start = run_start
+                    end = run_start + run_period * run_occurrences
+                    if not any(covered[i] for i in range(start, min(end, len(covered)))):
+                        for i in range(start, min(end, len(covered))):
+                            covered[i] = 1
+                        yield run_start, run_period, run_occurrences
+                # neuer Run, falls Motive übereinstimmen
                 if motif_n == motif_n1:
                     run_period = current
                     run_start = n.data
@@ -248,9 +285,14 @@ def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int):
                     run_occurrences = 1
                     run_motif = None
 
-    #Run vom letzten Durchlauf ausgeben
+    # Run vom letzten Durchlauf ausgeben
     if run_period is not None and run_occurrences >= 2:
-        yield run_start, run_period, run_occurrences
+        start = run_start
+        end = run_start + run_period * run_occurrences
+        if not any(covered[i] for i in range(start, min(end, len(covered)))):
+            for i in range(start, min(end, len(covered))):
+                covered[i] = 1
+            yield run_start, run_period, run_occurrences
 
 def reverse_complement(seq):
     """
@@ -333,7 +375,7 @@ def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = 
 
     with open(output_path, "w", encoding="utf-8") as f:
         # header
-        f.write("motif\trepeats\toccurrences\tproportion\treverse_comp\trev_comp\trepeats\toccurrences\tproportion\ttotal_repeats\ttotal_proportions\n")
+        f.write("motif\trepeats\tocc\tprop\trev_comp\trepeats\tocc\tprop\ttotal_rep\ttotal_prop\n")
         for row in rows:
             f.write("\t".join(str(col) for col in row) + "\n")
 
@@ -347,6 +389,7 @@ if __name__ == "__main__":
     parser.add_argument("-l", "--min_repeats", type=int, default=3, help="Minimale Anzahl der Wiederholungen (Standard: 3)")
     parser.add_argument("-u", "--max_repeats", type=int, default=10, help="Maximale Anzahl der Wiederholungen (Standard: 10)")
     parser.add_argument("-o", "--output", type=str, default="output.txt", help="Pfad zur Ausgabedatei (Standard: output.txt)")
+    parser.add_argument("-w", "--workers", type=int, default=4, help="Anzahl der parallelen Prozesse (Standard: 4)")
     args = parser.parse_args()
 
     print("Starting processing...")
@@ -368,9 +411,9 @@ if __name__ == "__main__":
     cur.execute("CREATE INDEX idx_motif ON repeats (motif)")
     conn.commit()
 
-    MAX_IN_FLIGHT = 8  # e.g., 2x number of workers
+    MAX_IN_FLIGHT = args.workers * 2
 
-    with ProcessPoolExecutor(max_workers=4) as executor:
+    with ProcessPoolExecutor(args.workers) as executor:
         print("Processing FASTA in chunks...")
 
         futures = set()
@@ -395,7 +438,7 @@ if __name__ == "__main__":
                 rows = done.result()
                 if rows:
                     cur.executemany(
-                        "INSERT OR IGNORE INTO repeats VALUES (?,?,?,?,?)",
+                        "INSERT INTO repeats VALUES (?,?,?,?,?)",
                         rows,
                     )
 
@@ -403,7 +446,7 @@ if __name__ == "__main__":
             rows = future.result()
             if rows:
                 cur.executemany(
-                    "INSERT OR IGNORE INTO repeats VALUES (?,?,?,?,?)",
+                    "INSERT INTO repeats VALUES (?,?,?,?,?)",
                     rows,
                 )
 

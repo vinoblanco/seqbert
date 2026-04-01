@@ -39,6 +39,7 @@ CLI options:
 - `-l`, `--min_repeats` (int, default 3): minimum number of repeat occurrences
 - `-u`, `--max_repeats` (int, default 10): maximum number of repeat occurrences
 - `-o`, `--output` (str, default `output.txt`): path to exported tab-separated output
+- `-w`, `--workers` (int, default 4): number of worker processes for parallel processing
 
 Example:
 

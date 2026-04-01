@@ -1,0 +1,2 @@
+motif	repeats	occ	prop	rev_comp	repeats	occ	prop	total_rep	total_prop
+CGGT	2486	583	1.0	ACCG	None	None	None	2486	1.0
