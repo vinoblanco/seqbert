@@ -4,14 +4,56 @@ import os
 import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from Bio import SeqIO
-from linkedList import LinkedList
-from typing import List, Iterator, Union
+from typing import List, Iterator, Union, Dict, Optional
 from itertools import islice
 
 try:
     import psutil
 except ImportError:
     psutil = None
+
+class Node:
+    def __init__(self, data):
+        self.data = data
+        self.next = None
+
+class LinkedList:
+    def __init__(self):
+        self.head = None
+        self.tail = None
+
+    def append(self, value):
+        new_node = Node(value)
+
+        if self.head is None:
+            # Liste ist leer, Head und Tail sind derselbe Node
+            self.head = new_node
+            self.tail = new_node
+        else:
+            # Den aktuellen Tail auf den neuen Knoten verlinken
+            self.tail.next = new_node
+            # Tail nachziehen
+            self.tail = new_node
+
+    def iterate(self):
+        node = self.head
+        while node is not None:
+            print(node.data)
+            node = node.next
+
+    def lenght(self):
+        count = 0
+        node = self.head
+        while node is not None:
+            node = node.next
+            count += 1
+        return count
+
+    def pairwise(self):
+        node = self.head
+        while node and node.next:
+            yield node, node.next
+            node = node.next
 
 def _get_available_memory_bytes() -> int:
     """
@@ -52,7 +94,7 @@ def fasta_in_chunks(fasta_path: str,
     # safety floor
     allowed_bytes = max(allowed_bytes, 1 * 1024 * 1024)  # at least 1 MB
 
-    chunk = []
+    chunk: List = []
     chunk_bytes = 0
 
     for record in SeqIO.parse(fasta_path, "fasta"):
@@ -97,7 +139,8 @@ def process_sequence(seq_str: str):
     :param seq_str: die Sequenz, für welche das Dict erstellt wird
     :return: das Dictionary
     """
-    base_tuple = {''.join(kombi): None for kombi in itertools.product(['A','C','G','T'], repeat=2)}
+    # Refine type annotations for base_tuple and ensure proper handling of LinkedList
+    base_tuple: Dict[str, Optional[LinkedList]] = {''.join(kombi): None for kombi in itertools.product(['A','C','G','T'], repeat=2)}
     #print(base_tuple)
 
     for i in range(len(seq_str) - 1):
