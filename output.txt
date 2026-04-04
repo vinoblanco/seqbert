@@ -1,0 +1,11 @@
+motif	repeats	occ	prop	rev_comp	repeats	occ	prop	total_rep	total_prop
+AGTGC	1166	388	0.61	ACTGC	None	None	None	1166	0.62
+ATTCTC	312	104	0.16	AATGAG	None	None	None	312	0.16
+AATGC	282	94	0.15	ATTGC	None	None	None	282	0.15
+AAAGGG	99	33	0.05	CCCTTT	None	None	None	99	0.05
+AAAGCGG	21	7	0.01	CCGCTTT	None	None	None	21	0.01
+AATAG	3	1	0.0	ATTCT	None	None	None	3	0.0
+ACCC	3	1	0.0	GGGT	None	None	None	3	0.0
+CCCT	3	1	0.0	AGGG	None	None	None	3	0.0
+CGGG	3	1	0.0	CCCG	None	None	None	3	0.0
+CTGT	3	1	0.0	ACAG	None	None	None	3	0.0

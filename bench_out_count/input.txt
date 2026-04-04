@@ -1,0 +1,1 @@
+python3 benchmark_main.py --out-dir ./bench_out_count --seq-count-start 10000 --seq-count-end 10000000 --seq-count-steps 50 --seq-lengths 1000 --cleanup --workers 8
