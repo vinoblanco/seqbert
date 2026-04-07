@@ -1,5 +1,6 @@
 import itertools
-import sqlite3, tempfile
+import sqlite3
+import tempfile
 import os
 import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -139,7 +140,6 @@ def process_sequence(seq_str: str):
     :param seq_str: die Sequenz, für welche das Dict erstellt wird
     :return: das Dictionary
     """
-    # Refine type annotations for base_tuple and ensure proper handling of LinkedList
     base_tuple: Dict[str, Optional[LinkedList]] = {''.join(kombi): None for kombi in itertools.product(['A','C','G','T'], repeat=2)}
     #print(base_tuple)
 
@@ -384,7 +384,6 @@ def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = 
         conn = db
 
     cur = conn.cursor()
-    #cur.execute("SELECT motif, " "SUM(repeat) AS total_repeats, " "COUNT(seq_number) AS occurrences, " "ROUND(SUM(repeat) * 1.0 / SUM(SUM(repeat)) OVER (), 2) AS proportion, " "reverse_comp " "FROM repeats GROUP BY motif ORDER BY total_repeats DESC")
     cur.execute("WITH aggregated AS ("
                 "SELECT motif, "
                 "SUM(repeat) AS total_repeats, "
@@ -447,8 +446,7 @@ if __name__ == "__main__":
         motif text NOT NULL,
         period integer NOT NULL,
         repeat integer NOT NULL,
-        reverse_comp text NOT NULL,
-        UNIQUE (seq_number, motif))
+        reverse_comp text NOT NULL)
     """)
 
     cur.execute("CREATE INDEX idx_motif ON repeats (motif)")
@@ -481,7 +479,7 @@ if __name__ == "__main__":
                 rows = done.result()
                 if rows:
                     cur.executemany(
-                        "INSERT INTO repeats VALUES (?,?,?,?,?)",
+                        "INSERT INTO repeats (seq_number, motif, period, repeat, reverse_comp) VALUES (?,?,?,?,?)",
                         rows,
                     )
 
@@ -489,7 +487,7 @@ if __name__ == "__main__":
             rows = future.result()
             if rows:
                 cur.executemany(
-                    "INSERT INTO repeats VALUES (?,?,?,?,?)",
+                    "INSERT INTO repeats (seq_number, motif, period, repeat, reverse_comp) VALUES (?,?,?,?,?)",
                     rows,
                 )
 
