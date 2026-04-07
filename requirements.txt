@@ -1,1 +1,2 @@
-biopython>=1.80
+biopython>=1.87
+psutil

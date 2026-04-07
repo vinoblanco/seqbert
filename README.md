@@ -15,16 +15,11 @@ Small Python tool to detect periodic DNA repeats (motifs) from FASTA sequences. 
 
 - Python 3.8+
 - Biopython
-- (optional) psutil — improves available-memory detection
+- psutil
 
 Install dependencies:
 
     pip install -r requirements.txt
-
-Or at minimum:
-
-    pip install biopython
-    pip install psutil   # optional, recommended
 
 ## Quick usage
 
@@ -59,41 +54,13 @@ The script prints progress messages, stores intermediate results in a temporary 
     motif text NOT NULL,
     period integer NOT NULL,
     repeat integer NOT NULL,
-    reverse_comp text NOT NULL,
-    UNIQUE (seq_number, motif)
+    reverse_comp text NOT NULL
   )
 
-- After processing, the database is aggregated and exported to the tab-separated `output.txt` file (or the path you provide). The exported columns include motif, repeats, occurrences, proportion and reverse complement statistics.
-
-## Key functions (implementation notes)
-
-- `fasta_in_chunks(fasta_path, max_ram_mb=None, ram_fraction=0.15, avg_bytes_per_base=1.5) -> Iterator[List[SeqRecord]]`
-  - Adaptive chunk generator that sizes chunks according to available memory. If `max_ram_mb` is set it overrides the adaptive calculation; otherwise the function attempts to detect available RAM (via `psutil` if installed, or `/proc/meminfo` on Linux) and uses `ram_fraction` of it as a budget.
-
-- `equal_fasta_chunks(path, chunk_size=5000) -> Iterator[List[SeqRecord]]`
-  - Simple fixed-size chunking using `itertools.islice`. This is used by default by `main.py`.
-
-- `process_sequence(seq_str: str) -> dict`
-  - Builds a dictionary keyed by all dinucleotide pairs (AA, AC, ..., TT) where values are `LinkedList` instances containing positions where that dinucleotide occurs.
-
-- `calculate_motif_repeat_in_sequence(ll: LinkedList, seq_str: str, motive_size: int) -> Iterator[(start, period, occurrences)]`
-  - Scans a linked list of positions for a dinucleotide key and yields detected runs where a motif repeats periodically. Returns start index, period (distance), and number of occurrences.
-
-- `calculate_difference(ll, motive_size)`
-  - Helper that groups adjacent position differences and yields counters and start positions used by higher-level routines.
-
-- `statistical_repeats(base_tuple, seq_str: str, seq_id, min_repeats, max_repeats, motive_size)`
-  - Aggregates findings for all dinucleotide keys for a single sequence, filters by `min_repeats`/`max_repeats`, computes canonical motifs and prepares rows for insertion into the database.
-
-- `worker_process_chunk(records, min_repeats, max_repeats, motive_size)`
-  - Runs in worker processes: takes lightweight records (tuples of id and sequence string), processes each sequence, and returns a list of rows matching the database schema for insertion.
-
-- `write_repeats_to_txt(db, output_path='output.txt')`
-  - Reads aggregated results from the temporary SQLite database and writes a summarized tab-separated file. The function performs aggregation (combining motifs with their reverse complements) before writing the final table.
+- After processing, the database is aggregated and exported to `output.csv` file (or the path you provide). The exported columns include motif, repeats, occurrences, proportion and reverse complement statistics.
 
 ## Memory / performance notes
 
-- If `psutil` is installed, the script will use it to detect available memory and the optional adaptive `fasta_in_chunks` can then size chunks automatically. Without `psutil` the script falls back to reading `/proc/meminfo` on Linux or uses a conservative default.
 - The multiprocessing approach uses `ProcessPoolExecutor(max_workers=4)` by default and limits the number of in-flight futures to avoid excessive memory use. You can change the number of workers by editing the `max_workers` argument in `main.py`.
 
 ## Limitations & TODOs
@@ -106,9 +73,9 @@ The script prints progress messages, stores intermediate results in a temporary 
 
 Given an input FASTA, run:
 
-    python3 main.py input.fasta -m 4 -l 3 -u 10 -o output.txt
+    python3 main.py input.fasta -m 4 -l 3 -u 10 -o output.csv
 
-This will create `output.txt` (tab-separated) that lists motifs, their repeat counts and summary statistics.
+This will create `output.csv` that lists motifs, their repeat counts and summary statistics.
 
 ## License
 

@@ -195,7 +195,7 @@ def statistical_repeats(
     for key, value in dinucleotides.items():
         if value is None or value.length() < min_repeats:
             continue
-        for start, period, occurrences in calculate_motif_repeat_in_sequence(value, seq_str, motive_size, covered):
+        for start, period, occurrences in search_motif(value, seq_str, motive_size, covered):
             if min_repeats <= occurrences <= max_repeats:
                 end = start + period * occurrences
                 motif = str(canonical_dna_motif(seq_str[start:start + period]))
@@ -238,7 +238,7 @@ def calculate_difference(ll: LinkedList, motive_size: int):
     if counter:
         yield counter, start
 
-def calculate_motif_repeat_in_sequence(ll: LinkedList, seq_str: str, motive_size: int, covered: bytearray):
+def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytearray):
     """
     Finds motifs in the sequence based on the linked list with the occurrences of a dinucleotide
     Avoids areas that have already been marked as part of a found repeat.
@@ -392,7 +392,7 @@ def worker_process_chunk(records, min_repeats, max_repeats, motive_size):
         rows.extend(repeats)
     return rows
 
-def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = "output.txt") -> None:
+def write_output(db: Union[str, sqlite3.Connection], output_path: str = "output.txt") -> None:
     """
     Writes the found repeats from the database to a text file.
     :param output_path: Path to the output file.
@@ -520,6 +520,6 @@ if __name__ == "__main__":
         conn.commit()
 
     print("Writing results to " + args.output + "...")
-    write_repeats_to_txt(conn, args.output)
+    write_output(conn, args.output)
     conn.close()
     tmp.close()
