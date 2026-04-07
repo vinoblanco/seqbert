@@ -3,46 +3,65 @@ import sqlite3
 import tempfile
 import os
 import argparse
+import psutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from Bio import SeqIO
 from typing import List, Iterator, Union, Dict, Optional
 from itertools import islice
 
-try:
-    import psutil
-except ImportError:
-    psutil = None
+# try:
+#     import psutil
+# except ImportError:
+#     psutil = None
 
 class Node:
     def __init__(self, data):
+        """
+        Initializes a Node with data and a reference to the next node.
+        :param data: The data to store in the node.
+        """
         self.data = data
         self.next = None
 
 class LinkedList:
     def __init__(self):
+        """
+        Initializes an empty linked list with head and tail set to None.
+        """
         self.head = None
         self.tail = None
 
     def append(self, value):
+        """
+        Appends a new node with the given value to the end of the linked list.
+        :param value: The value to append.
+        """
         new_node = Node(value)
 
         if self.head is None:
-            # Liste ist leer, Head und Tail sind derselbe Node
+            # List is empty, head and tail are the same node
             self.head = new_node
             self.tail = new_node
         else:
-            # Den aktuellen Tail auf den neuen Knoten verlinken
+            # Link the current tail to the new node
             self.tail.next = new_node
-            # Tail nachziehen
+            # Move the tail reference to the new node
             self.tail = new_node
 
     def iterate(self):
+        """
+        Iterates through the linked list and prints the data of each node.
+        """
         node = self.head
         while node is not None:
             print(node.data)
             node = node.next
 
-    def lenght(self):
+    def length(self):
+        """
+        Calculates the length of the linked list.
+        :return: The number of nodes in the linked list.
+        """
         count = 0
         node = self.head
         while node is not None:
@@ -51,6 +70,10 @@ class LinkedList:
         return count
 
     def pairwise(self):
+        """
+        Generates pairs of consecutive nodes in the linked list.
+        :yield: A tuple of two consecutive nodes.
+        """
         node = self.head
         while node and node.next:
             yield node, node.next
@@ -58,8 +81,8 @@ class LinkedList:
 
 def _get_available_memory_bytes() -> int:
     """
-    Gibt den verfügbaren RAM in Bytes zurück. Bevorzuge psutil, wenn installiert,
-    ansonsten lese /proc/meminfo (Linux).
+    Returns the available RAM in bytes. Prefers psutil if installed,
+    otherwise reads /proc/meminfo (Linux).
     """
     if psutil:
         return int(psutil.virtual_memory().available)
@@ -75,16 +98,15 @@ def _get_available_memory_bytes() -> int:
     #Last resort: assume 256 MB available
     return 256 * 1024 * 1024
 
-def fasta_in_chunks(fasta_path: str,
-                    max_ram_mb: int = None,
-                    ram_fraction: float = 0.15,
-                    avg_bytes_per_base: float = 1.5) -> Iterator[List]:
+def fasta_in_chunks(
+        fasta_path: str,max_ram_mb: int = None,ram_fraction: float = 0.15,avg_bytes_per_base: float = 1.5
+) -> Iterator[List]:
     """
-    Gibt Listen von SeqRecord Objekten zurück, die nach verfügbarem RAM dimensioniert sind.
-    - fasta_path: Pfad zur FASTA Datei
-    - max_ram_mb: maximaler RAM in MB (überschreibt ram_fraction, wenn gesetzt)
-    - ram_fraction: Anteil des verfügbaren RAMs, der genutzt werden soll (0.0 - 1.0)
-    - avg_bytes_per_base: geschätzte durchschnittliche Bytes pro Base in SeqRecord
+    Returns lists of SeqRecord objects sized according to available RAM.
+    - fasta_path: Path to the FASTA file
+    - max_ram_mb: maximum RAM in MB (overrides ram_fraction if set)
+    - ram_fraction: Fraction of available RAM to use (0.0 - 1.0)
+    - avg_bytes_per_base: Estimated average bytes per base in SeqRecord
     """
     if max_ram_mb is not None:
         allowed_bytes = int(max_ram_mb * 1024 * 1024)
@@ -135,43 +157,42 @@ def equal_fasta_chunks(path, chunk_size=5000):
 
 def process_sequence(seq_str: str):
     """
-    In dieser Methode wird ein Dictionary erstellt, welches mit Basentupeln als Keys und den Vorkommen dieser als
-    Value befüllt wird.
-    :param seq_str: die Sequenz, für welche das Dict erstellt wird
-    :return: das Dictionary
+    In this method, a dictionary is created, which is populated with dinucleotide as keys and their occurrences as
+    values.
+    :param seq_str: the sequence for which the dict is created
+    :return: the dictionary
     """
-    base_tuple: Dict[str, Optional[LinkedList]] = {''.join(kombi): None for kombi in itertools.product(['A','C','G','T'], repeat=2)}
-    #print(base_tuple)
+    dinucleotides: Dict[str, Optional[LinkedList]] = \
+        {''.join(kombi): None for kombi in itertools.product(['A','C','G','T'], repeat=2)}
 
     for i in range(len(seq_str) - 1):
         key = str(seq_str[i:i+2])
-        if base_tuple[key] is None:
+        if dinucleotides[key] is None:
             ll = LinkedList()
-            base_tuple[key] = ll
+            dinucleotides[key] = ll
             ll.append(i)
         else:
-            base_tuple[key].append(i)
+            dinucleotides[key].append(i)
 
-    return base_tuple
+    return dinucleotides
 
-#todo optimieren das nicht komplette Sequenz mehrfach analysiert wird
-def statistical_repeats(base_tuple, seq_str: str, seq_id, min_repeats, max_repeats, motive_size):
+def statistical_repeats(
+        dinucleotides: dict, seq_str: str, seq_id: int, min_repeats: int, max_repeats: int, motive_size:int
+):
     """
-    Wertet das Dictionary aus und schreibt die gefundenen Repeats in eine Datenbank
-    :param base_tuple: das Dictionary
-    :param seq_str: die Sequenz des Dictionary als String
-    :param seq_id: die ID der Sequenz
-    :param min_repeats: mindest Anzahl der Vorkommen, damit es als Repeat angesehen wird
-    :param max_repeats: maximale Anzahl der Vorkommen, damit es als Repeat angesehen wird
-    :param motive_size: mindest Motivgröße
-    :return: ein Array mit den gefundenen Repeats und deren Eigenschaften (Seq_ID, Motiv, Start, Periode, Anzahl)
+    Evaluates the dictionary and writes the found repeats to a database
+    :param dinucleotides: the dictionary
+    :param seq_str: the sequence of the dictionary as a string
+    :param seq_id: the ID of the sequence
+    :param min_repeats: minimum number of occurrences for it to be considered a repeat
+    :param max_repeats: maximum number of occurrences for it to be considered a repeat
+    :param motive_size: minimum motif size
+    :return: an array with the found repeats and their properties (Seq_ID, motif, start, period, number)
     """
     repeats = []
-    # create a per-sequence coverage map to avoid reporting the same region multiple times
     covered = bytearray(len(seq_str))
-    for key, value in base_tuple.items():
-        # überspringt zu kurze oder leere Dictionary Einträge
-        if value is None or value.lenght() < min_repeats:
+    for key, value in dinucleotides.items():
+        if value is None or value.length() < min_repeats:
             continue
         for start, period, occurrences in calculate_motif_repeat_in_sequence(value, seq_str, motive_size, covered):
             if min_repeats <= occurrences <= max_repeats:
@@ -182,13 +203,13 @@ def statistical_repeats(base_tuple, seq_str: str, seq_id, min_repeats, max_repea
     return repeats
 
 
-def calculate_difference(ll, motive_size):
+def calculate_difference(ll: LinkedList, motive_size: int):
     """
-    Wertet die Linked List aus, welche alle vorkommen eines Basentupels enthalten. Berechnet, ob der Abstand zwischen
-    zwei Vorkommen periodisch ist.
-    :param ll: Linked List mit den Vorkommen des Basentupels
-    :param motive_size: mindest Motivgröße
-    :return: wann das Vorkommen startet (start) und wie oft es auftritt (count)
+    Evaluates the linked list, which contains all occurrences of a dinucleotide. Calculates whether the distance between
+    two occurrences is periodic.
+    :param ll: Linked list with the occurrences of the dinucleotide
+    :param motive_size: minimum motif size
+    :return: when the occurrence starts (start) and how often it occurs (count)
     """
     counter = {}
     start = None
@@ -216,15 +237,15 @@ def calculate_difference(ll, motive_size):
     if counter:
         yield counter, start
 
-def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int, covered: bytearray):
+def calculate_motif_repeat_in_sequence(ll: LinkedList, seq_str: str, motive_size: int, covered: bytearray):
     """
-    Findet Motive in der Sequenz anhand der Linked List mit den Vorkommen eines Basentupels
-    Vermeidet Bereiche, die bereits als Teil eines gefundenen Repeats markiert wurden.
-    :param ll: Linked List mit den Vorkommen des Basentupels
-    :param seq_str: die Sequenz als String
-    :param motive_size: mindest Motivgröße
-    :param covered: bytearray, markiert Indizes, die bereits von einem gefundenen Repeat abgedeckt sind
-    :return: wann das Vorkommen startet (start), die Periode (period) und wie oft es auftritt (occurrences)
+    Finds motifs in the sequence based on the linked list with the occurrences of a dinucleotide
+    Avoids areas that have already been marked as part of a found repeat.
+    :param ll: Linked list with the occurrences of the dinucleotide
+    :param seq_str: the sequence as a string
+    :param motive_size: minimum motif size
+    :param covered: bytearray, marks indices that have already been covered by a found repeat
+    :return: when the occurrence starts (start), the period (period) and how often it occurs (occurrences)
     """
     run_period = None
     run_start = None
@@ -232,13 +253,13 @@ def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int, cover
     run_motif = None
 
     for n, n1 in ll.pairwise():
-        # Wenn eine der beiden Positionen bereits betrachtet wurde überspringen
+        # If one of the two positions has already been considered, skip it
         if covered[n.data] or covered[n1.data]:
-            # Wenn bereits ein Run besteht, diesen beenden und neuen beginnen
+            # If a run is already active, end it and start a new one
             if run_period is not None and run_occurrences >= 2:
                 start = run_start
                 end = run_start + run_period * run_occurrences
-                # Wenn der Run in einen bereits betrachteten Teil der Sequenz beinhaltet, yielden und markieren
+                # If the run is not in an already considered part of the sequence, yield and mark it
                 if not any(covered[i] for i in range(start, min(end, len(covered)))):
                     for i in range(start, min(end, len(covered))):
                         covered[i] = 1
@@ -251,7 +272,7 @@ def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int, cover
 
         current = n1.data - n.data
 
-        # Abbruchbedingung für zu kurze Motive
+        # Termination condition for motifs that are too short
         if current < motive_size:
             if run_period is not None and run_occurrences >= 2:
                 start = run_start
@@ -266,11 +287,11 @@ def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int, cover
             run_motif = None
             continue
 
-        # extrahiere Motive zum Vergleichen
+        # extract motifs for comparison
         motif_n = seq_str[n.data:n.data + current]
         motif_n1 = seq_str[n1.data:n1.data + current]
 
-        # Abbruchbedingung für unvollständige Motive am Ende der Sequenz
+        # Termination condition for incomplete motifs at the end of the sequence
         if len(motif_n) != current or len(motif_n1) != current:
             if run_period is not None and run_occurrences >= 2:
                 start = run_start
@@ -285,30 +306,30 @@ def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int, cover
             run_motif = None
             continue
 
-        # Wenn noch kein Run aktiv ist
+        # If no run is active yet
         if run_period is None:
-            # Starte neuen Run, wenn Motive übereinstimmen
+            # Start a new run if the motifs match
             if motif_n == motif_n1:
                 run_period = current
                 run_start = n.data
                 run_occurrences = 2
                 run_motif = motif_n
-            # Setze Werte zurück, wenn kein Run gestartet werden kann
+            # Reset values if no run can be started
             else:
                 run_period = None
                 run_start = None
                 run_occurrences = 1
                 run_motif = None
 
-        # Wenn bereits ein Run aktiv ist
+        # If a run is already active
         else:
-            # Run fortsetzen, wenn Periode und Motiv übereinstimmen
+            # Continue the run if the period and motif match
             if current == run_period and motif_n1 == run_motif:
                 run_occurrences += 1
 
-            # Run beenden und neuen Run starten, wenn die folgenden Motive übereinstimmt
+            # End the run and start a new run if the following motifs match
             else:
-                # Run beenden
+                # End the run
                 if run_occurrences >= 2:
                     start = run_start
                     end = run_start + run_period * run_occurrences
@@ -316,7 +337,7 @@ def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int, cover
                         for i in range(start, min(end, len(covered))):
                             covered[i] = 1
                         yield run_start, run_period, run_occurrences
-                # neuer Run, falls Motive übereinstimmen
+                # new run if motifs match
                 if motif_n == motif_n1:
                     run_period = current
                     run_start = n.data
@@ -328,7 +349,7 @@ def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int, cover
                     run_occurrences = 1
                     run_motif = None
 
-    # Run vom letzten Durchlauf ausgeben
+    # Output the run from the last pass
     if run_period is not None and run_occurrences >= 2:
         start = run_start
         end = run_start + run_period * run_occurrences
@@ -337,31 +358,31 @@ def calculate_motif_repeat_in_sequence(ll, seq_str: str, motive_size: int, cover
                 covered[i] = 1
             yield run_start, run_period, run_occurrences
 
-def reverse_complement(seq):
+def reverse_complement(seq: str):
     """
-    Gibt das reverse complement einer DNA Sequenz zurück
-    :param seq: DNA Sequenz
-    :return: reverse complement der DNA Sequenz
+    Returns the reverse complement of a DNA sequence
+    :param seq: DNA sequence
+    :return: reverse complement of the DNA sequence
     """
     return seq.translate(str.maketrans("ACGT", "TGCA"))[::-1]
 
-def canonical_dna_motif(seq):
+def canonical_dna_motif(seq: str):
     """
-    Sortiert eine Sequenz lexikographisch und gibt das kleinste Ergebnis zurück
-    :param seq: Sequenz
-    :return: kleinste Sortierung
+    Sorts a sequence lexicographically and returns the smallest result
+    :param seq: sequence
+    :return: smallest sorting
     """
     candidates = [seq[i:] + seq[:i] for i in range(len(seq))]
     return min(candidates)
 
 def worker_process_chunk(records, min_repeats, max_repeats, motive_size):
     """
-    Vorbereitet die Daten für die Verarbeitung in einem Prozess
-    :param records: Sequenz Datensätze nur mit id und Sequenz String
-    :param min_repeats: minimale Anzahl der Wiederholungen
-    :param max_repeats: maximale Anzahl der Wiederholungen
-    :param motive_size: mindest Motivgröße
-    :return: Daten
+    Prepares the data for processing in a process
+    :param records: Sequence records only with id and sequence string
+    :param min_repeats: minimum number of repetitions
+    :param max_repeats: maximum number of repetitions
+    :param motive_size: minimum motif size
+    :return: data
     """
     rows = []
     for rec_id, seq_str in records:
@@ -372,9 +393,9 @@ def worker_process_chunk(records, min_repeats, max_repeats, motive_size):
 
 def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = "output.txt") -> None:
     """
-    Schreibt die gefundenen Repeats aus der Datenbank in eine Textdatei.
-    :param output_path: Pfad zur Ausgabedatei.
-    :param db: Datenbankverbindung oder Pfad zur Datenbankdatei.
+    Writes the found repeats from the database to a text file.
+    :param output_path: Path to the output file.
+    :param db: Database connection or path to the database file.
     """
     close_conn = False
     if isinstance(db, str):
@@ -405,7 +426,9 @@ def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = 
                 "(a.total_repeats + COALESCE(b.total_repeats, 0)) AS combined_repeats "
                 "FROM aggregated a "
                 "LEFT JOIN aggregated b ON a.reverse_comp = b.motif "
-                "WHERE a.reverse_comp IS NOT NULL   AND (a.total_repeats > COALESCE(b.total_repeats, 0) OR (a.total_repeats = COALESCE(b.total_repeats, 0) AND a.motif < b.motif))"
+                "WHERE a.reverse_comp IS NOT NULL "
+                "AND (a.total_repeats > COALESCE(b.total_repeats, 0) "
+                "OR (a.total_repeats = COALESCE(b.total_repeats, 0) AND a.motif < b.motif))"
             ") "
             "SELECT *, "
             "ROUND(combined_repeats * 1.0 / SUM(combined_repeats) OVER (), 2) "
@@ -416,7 +439,7 @@ def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = 
     rows = cur.fetchall()
 
     with open(output_path, "w", encoding="utf-8") as f:
-        # header
+        #header
         f.write("motif\trepeats\tocc\tprop\trev_comp\trepeats\tocc\tprop\ttotal_rep\ttotal_prop\n")
         for row in rows:
             f.write("\t".join(str(col) for col in row) + "\n")
@@ -425,13 +448,18 @@ def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = 
         conn.close()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Findet und speichert periodische Repeats in DNA Sequenzen aus einer FASTA Datei.")
-    parser.add_argument("fasta", help="Pfad zur Eingabe-FASTA Datei")
-    parser.add_argument("-m", "--motive_size", type=int, default=4, help="Mindestgröße des Motivs (Standard: 4)")
-    parser.add_argument("-l", "--min_repeats", type=int, default=3, help="Minimale Anzahl der Wiederholungen (Standard: 3)")
-    parser.add_argument("-u", "--max_repeats", type=int, default=10, help="Maximale Anzahl der Wiederholungen (Standard: 10)")
-    parser.add_argument("-o", "--output", type=str, default="output.txt", help="Pfad zur Ausgabedatei (Standard: output.txt)")
-    parser.add_argument("-w", "--workers", type=int, default=4, help="Anzahl der parallelen Prozesse (Standard: 4)")
+    parser = argparse.ArgumentParser(description="Finds and saves periodic repeats in DNA sequences from a FASTA file.")
+    parser.add_argument("fasta", help="Path to the input FASTA file")
+    parser.add_argument("-m", "--motive_size", type=int, default=4,
+                        help="Minimum size of the motif (default: 4)")
+    parser.add_argument("-l", "--min_repeats", type=int, default=3,
+                        help="Minimum number of repetitions (default: 3)")
+    parser.add_argument("-u", "--max_repeats", type=int, default=10,
+                        help="Maximum number of repetitions (default: 10)")
+    parser.add_argument("-o", "--output", type=str, default="output.txt",
+                        help="Path to the output file (default: output.txt)")
+    parser.add_argument("-w", "--workers", type=int, default=4,
+                        help="Number of parallel processes (default: 4)")
     args = parser.parse_args()
 
     print("Starting processing...")
