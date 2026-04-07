@@ -4,6 +4,7 @@ import tempfile
 import os
 import argparse
 import psutil
+import csv
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from Bio import SeqIO
 from typing import List, Iterator, Union, Dict, Optional
@@ -436,13 +437,10 @@ def write_repeats_to_txt(db: Union[str, sqlite3.Connection], output_path: str = 
             "FROM paired "
             "ORDER BY combined_proportion DESC")
 
-    rows = cur.fetchall()
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        #header
-        f.write("motif\trepeats\tocc\tprop\trev_comp\trepeats\tocc\tprop\ttotal_rep\ttotal_prop\n")
-        for row in rows:
-            f.write("\t".join(str(col) for col in row) + "\n")
+    with open(output_path, "w", newline='') as csv_file:
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow([i[0] for i in cur.description])
+        csv_writer.writerows(cur)
 
     if close_conn:
         conn.close()
@@ -456,8 +454,8 @@ if __name__ == "__main__":
                         help="Minimum number of repetitions (default: 3)")
     parser.add_argument("-u", "--max_repeats", type=int, default=10,
                         help="Maximum number of repetitions (default: 10)")
-    parser.add_argument("-o", "--output", type=str, default="output.txt",
-                        help="Path to the output file (default: output.txt)")
+    parser.add_argument("-o", "--output", type=str, default="output.csv",
+                        help="Path to the output file (default: output.csv)")
     parser.add_argument("-w", "--workers", type=int, default=4,
                         help="Number of parallel processes (default: 4)")
     args = parser.parse_args()
