@@ -3,17 +3,11 @@ import sqlite3
 import tempfile
 import os
 import argparse
-import psutil
 import csv
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from Bio import SeqIO
-from typing import List, Iterator, Union, Dict, Optional, Any
+from typing import Union, Dict, Optional, Any
 from itertools import islice
-
-# try:
-#     import psutil
-# except ImportError:
-#     psutil = None
 
 
 class Node:
@@ -81,77 +75,6 @@ class LinkedList:
         while node and node.next:
             yield node, node.next
             node = node.next
-
-
-def _get_available_memory_bytes() -> int:
-    """
-    Returns the available RAM in bytes. Prefers psutil if installed,
-    otherwise reads /proc/meminfo (Linux).
-    """
-    if psutil:
-        return int(psutil.virtual_memory().available)
-    # Fallback for Linux
-    meminfo_path = "/proc/meminfo"
-    if os.path.exists(meminfo_path):
-        with open(meminfo_path, "r") as f:
-            for line in f:
-                if line.startswith("MemAvailable:"):
-                    parts = line.split()
-                    # value is in kB
-                    return int(parts[1]) * 1024
-    # Last resort: assume 256 MB available
-    return 256 * 1024 * 1024
-
-
-def fasta_in_chunks(
-    fasta_path: str,
-    max_ram_mb: int = None,
-    ram_fraction: float = 0.15,
-    avg_bytes_per_base: float = 1.5,
-) -> Iterator[List]:
-    """
-    Returns lists of SeqRecord objects sized according to available RAM.
-    - fasta_path: Path to the FASTA file
-    - max_ram_mb: maximum RAM in MB (overrides ram_fraction if set)
-    - ram_fraction: Fraction of available RAM to use (0.0 - 1.0)
-    - avg_bytes_per_base: Estimated average bytes per base in SeqRecord
-    """
-    if max_ram_mb is not None:
-        allowed_bytes = int(max_ram_mb * 1024 * 1024)
-    else:
-        avail = _get_available_memory_bytes()
-        allowed_bytes = int(avail * float(ram_fraction))
-
-    # safety floor
-    allowed_bytes = max(allowed_bytes, 1 * 1024 * 1024)  # at least 1 MB
-
-    chunk: List = []
-    chunk_bytes = 0
-
-    for record in SeqIO.parse(fasta_path, "fasta"):
-        rec_bases = len(record.seq)
-        rec_estimated_bytes = int(rec_bases * avg_bytes_per_base)
-
-        # If a single record is larger than allowed_bytes, yield it alone
-        if rec_estimated_bytes >= allowed_bytes:
-            if chunk:
-                yield chunk
-                chunk = []
-                chunk_bytes = 0
-            yield [record]
-            continue
-
-        # If adding this record would exceed the allowed budget, yield current chunk
-        if chunk and (chunk_bytes + rec_estimated_bytes) > allowed_bytes:
-            yield chunk
-            chunk = []
-            chunk_bytes = 0
-
-        chunk.append(record)
-        chunk_bytes += rec_estimated_bytes
-
-    if chunk:
-        yield chunk
 
 
 def equal_fasta_chunks(path, chunk_size=5000):
@@ -356,7 +279,12 @@ def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytear
     yield from yield_run(covered, run_occurrences, run_period, run_start)
 
 
-def yield_run(covered: bytearray, run_occurrences: int, run_period: Any | None, run_start: Any | None):
+def yield_run(
+    covered: bytearray,
+    run_occurrences: int,
+    run_period: Any | None,
+    run_start: Any | None,
+):
     if run_period is not None and run_occurrences >= 2:
         start = run_start
         end = run_start + run_period * run_occurrences
@@ -501,6 +429,13 @@ if __name__ == "__main__":
         type=int,
         default=4,
         help="Number of parallel processes (default: 4)",
+    )
+    parser.add_argument(
+        "-c",
+        "--chunk_size",
+        type=int,
+        default=5000,
+        help="Size of each chunk (default: 5000)",
     )
     args = parser.parse_args()
 
