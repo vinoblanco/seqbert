@@ -5,79 +5,13 @@ import os
 import argparse
 import csv
 import time
+from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from Bio import SeqIO
 from typing import Union, Dict, Optional, Any
 from itertools import islice
 
-from line_profiler import profile
-
-
-class Node:
-    def __init__(self, data):
-        """
-        Initializes a Node with data and a reference to the next node.
-        :param data: The data to store in the node.
-        """
-        self.data = data
-        self.next = None
-
-
-class LinkedList:
-    def __init__(self):
-        """
-        Initializes an empty linked list with head and tail set to None.
-        """
-        self.head = None
-        self.tail = None
-
-    def append(self, value):
-        """
-        Appends a new node with the given value to the end of the linked list.
-        :param value: The value to append.
-        """
-        new_node = Node(value)
-
-        if self.head is None:
-            # List is empty, head and tail are the same node
-            self.head = new_node
-            self.tail = new_node
-        else:
-            # Link the current tail to the new node
-            self.tail.next = new_node
-            # Move the tail reference to the new node
-            self.tail = new_node
-
-    def iterate(self):
-        """
-        Iterates through the linked list and prints the data of each node.
-        """
-        node = self.head
-        while node is not None:
-            print(node.data)
-            node = node.next
-
-    def length(self):
-        """
-        Calculates the length of the linked list.
-        :return: The number of nodes in the linked list.
-        """
-        count = 0
-        node = self.head
-        while node is not None:
-            node = node.next
-            count += 1
-        return count
-
-    def pairwise(self):
-        """
-        Generates pairs of consecutive nodes in the linked list.
-        :yield: A tuple of two consecutive nodes.
-        """
-        node = self.head
-        while node and node.next:
-            yield node, node.next
-            node = node.next
+DNA_TRANS_TABLE = str.maketrans("ACGT", "TGCA")
 
 
 def equal_fasta_chunks(path, chunk_size):
@@ -92,35 +26,24 @@ def equal_fasta_chunks(path, chunk_size):
 
 def process_sequence(seq_str: str):
     """
-    In this method, a dictionary is created, which is populated with dinucleotide as keys and their occurrences as
-    values.
-    :param seq_str: the sequence for which the dict is created
-    :return: the dictionary
+    Creates a dictionary populated with dinucleotides as keys and their occurrences as values.
+    OPTIMIZATION: Uses built-in defaultdict and native C-arrays (lists) for instant appends.
     """
-    dinucleotides: Dict[str, Optional[LinkedList]] = {
-        "".join(kombi): None
-        for kombi in itertools.product(["A", "C", "G", "T"], repeat=2)
-    }
+    dinucleotides = defaultdict(list)
 
     for i in range(len(seq_str) - 1):
-        key = str(seq_str[i : i + 2])
-        if dinucleotides[key] is None:
-            ll = LinkedList()
-            dinucleotides[key] = ll
-            ll.append(i)
-        else:
-            dinucleotides[key].append(i)
+        dinucleotides[seq_str[i: i + 2]].append(i)
 
     return dinucleotides
 
 
 def statistical_repeats(
-    dinucleotides: dict,
-    seq_str: str,
-    seq_id: int,
-    min_repeats: int,
-    max_repeats: int,
-    motive_size: int,
+        dinucleotides: dict,
+        seq_str: str,
+        seq_id: int,
+        min_repeats: int,
+        max_repeats: int,
+        motive_size: int,
 ):
     """
     Evaluates the dictionary and writes the found repeats to a database
@@ -134,15 +57,17 @@ def statistical_repeats(
     """
     repeats = []
     covered = bytearray(len(seq_str))
-    for key, value in dinucleotides.items():
-        if value is None or value.length() < min_repeats:
+
+    for key, positions in dinucleotides.items():
+        if len(positions) < min_repeats:
             continue
+
         for start, period, occurrences in search_motif(
-            value, seq_str, motive_size, covered
+                positions, seq_str, motive_size, covered
         ):
             if min_repeats <= occurrences <= max_repeats:
                 end = start + period * occurrences
-                motif = str(canonical_dna_motif(seq_str[start : start + period]))
+                motif = str(canonical_dna_motif(seq_str[start: start + period]))
                 if end <= len(seq_str):
                     repeats.append(
                         (
@@ -156,60 +81,15 @@ def statistical_repeats(
     return repeats
 
 
-def calculate_difference(ll: LinkedList, motive_size: int):
-    """
-    Evaluates the linked list, which contains all occurrences of a dinucleotide. Calculates whether the distance between
-    two occurrences is periodic.
-    :param ll: Linked list with the occurrences of the dinucleotide
-    :param motive_size: minimum motif size
-    :return: when the occurrence starts (start) and how often it occurs (count)
-    """
-    counter = {}
-    start = None
-    last = None
-
-    for n, n1 in ll.pairwise():
-        current = n1.data - n.data
-
-        if last is None:
-            last = current
-            counter = {current: 1}
-            start = n.data
-            continue
-
-        if current != last or current < motive_size:
-            if counter:
-                yield counter, start
-            counter = {current: 1}
-            start = n.data
-            last = current
-        else:
-            counter[current] = counter.get(current, 0) + 1
-            last = current
-
-    if counter:
-        yield counter, start
-
-
-def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytearray):
-    """
-    Finds motifs in the sequence based on the linked list with the occurrences of a dinucleotide
-    Avoids areas that have already been marked as part of a found repeat.
-    :param ll: Linked list with the occurrences of the dinucleotide
-    :param seq_str: the sequence as a string
-    :param motive_size: minimum motif size
-    :param covered: bytearray, marks indices that have already been covered by a found repeat
-    :return: when the occurrence starts (start), the period (period) and how often it occurs (occurrences)
-    """
+def search_motif(positions: list, seq_str: str, motive_size: int, covered: bytearray):
     run_period = None
     run_start = None
     run_occurrences = 1
     run_motif = None
 
-    for n, n1 in ll.pairwise():
-        # If one of the two positions has already been considered, skip it
-        if covered[n.data] or covered[n1.data]:
-            # If a run is already active, end it and start a new one
+    for n, n1 in zip(positions, positions[1:]):
+
+        if covered[n] or covered[n1]:
             yield from yield_run(covered, run_occurrences, run_period, run_start)
             run_period = None
             run_start = None
@@ -217,9 +97,8 @@ def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytear
             run_motif = None
             continue
 
-        current = n1.data - n.data
+        current = n1 - n
 
-        # Termination condition for motifs that are too short
         if current < motive_size:
             yield from yield_run(covered, run_occurrences, run_period, run_start)
             run_period = None
@@ -228,11 +107,9 @@ def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytear
             run_motif = None
             continue
 
-        # extract motifs for comparison
-        motif_n = seq_str[n.data : n.data + current]
-        motif_n1 = seq_str[n1.data : n1.data + current]
+        motif_n = seq_str[n: n + current]
+        motif_n1 = seq_str[n1: n1 + current]
 
-        # Termination condition for incomplete motifs at the end of the sequence
         if len(motif_n) != current or len(motif_n1) != current:
             yield from yield_run(covered, run_occurrences, run_period, run_start)
             run_period = None
@@ -241,35 +118,25 @@ def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytear
             run_motif = None
             continue
 
-        # If no run is active yet
         if run_period is None:
-            # Start a new run if the motifs match
             if motif_n == motif_n1:
                 run_period = current
-                run_start = n.data
+                run_start = n
                 run_occurrences = 2
                 run_motif = motif_n
-            # Reset values if no run can be started
             else:
                 run_period = None
                 run_start = None
                 run_occurrences = 1
                 run_motif = None
-
-        # If a run is already active
         else:
-            # Continue the run if the period and motif match
             if current == run_period and motif_n1 == run_motif:
                 run_occurrences += 1
-
-            # End the run and start a new run if the following motifs match
             else:
-                # End the run
                 yield from yield_run(covered, run_occurrences, run_period, run_start)
-                # new run if motifs match
                 if motif_n == motif_n1:
                     run_period = current
-                    run_start = n.data
+                    run_start = n
                     run_occurrences = 2
                     run_motif = motif_n
                 else:
@@ -278,15 +145,14 @@ def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytear
                     run_occurrences = 1
                     run_motif = None
 
-    # Output the run from the last pass
     yield from yield_run(covered, run_occurrences, run_period, run_start)
 
 
 def yield_run(
-    covered: bytearray,
-    run_occurrences: int,
-    run_period: Any | None,
-    run_start: Any | None,
+        covered: bytearray,
+        run_occurrences: int,
+        run_period: Any | None,
+        run_start: Any | None,
 ):
     if run_period is not None and run_occurrences >= 2:
         start = run_start
@@ -298,22 +164,11 @@ def yield_run(
 
 
 def reverse_complement(seq: str):
-    """
-    Returns the reverse complement of a DNA sequence
-    :param seq: DNA sequence
-    :return: reverse complement of the DNA sequence
-    """
-    return seq.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+    return seq.translate(DNA_TRANS_TABLE)[::-1]
 
 
 def canonical_dna_motif(seq: str):
-    """
-    Sorts a sequence lexicographically and returns the smallest result
-    :param seq: sequence
-    :return: smallest sorting
-    """
-    candidates = [seq[i:] + seq[:i] for i in range(len(seq))]
-    return min(candidates)
+    return min(seq[i:] + seq[:i] for i in range(len(seq)))
 
 
 def worker_process_chunk(chunk, min_repeats, max_repeats, motive_size):
@@ -326,25 +181,18 @@ def worker_process_chunk(chunk, min_repeats, max_repeats, motive_size):
     :return: data
     """
     rows = []
-    for rec in chunk:
-        seq_str = str(rec.seq)
-        rec_id = rec.id
-        base_tuple = process_sequence(seq_str)
+    for rec_id, seq_str in chunk:
+        base_dict = process_sequence(seq_str)
         repeats = statistical_repeats(
-            base_tuple, seq_str, rec_id, min_repeats, max_repeats, motive_size
+            base_dict, seq_str, rec_id, min_repeats, max_repeats, motive_size
         )
         rows.extend(repeats)
     return rows
 
 
 def write_output(
-    db: Union[str, sqlite3.Connection], output_path: str = "output.txt"
+        db: Union[str, sqlite3.Connection], output_path: str = "output.csv"
 ) -> None:
-    """
-    Writes the found repeats from the database to a text file.
-    :param output_path: Path to the output file.
-    :param db: Database connection or path to the database file.
-    """
     close_conn = False
     if isinstance(db, str):
         conn = sqlite3.connect(db)
@@ -353,8 +201,11 @@ def write_output(
         conn = db
 
     cur = conn.cursor()
-    cur.execute("CREATE INDEX idx_motif ON repeats (motif)")
+
+    print("Building indexes for final export...")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_motif ON repeats (motif)")
     conn.commit()
+
     cur = conn.cursor()
     cur.execute("SELECT SUM(repeat) FROM repeats")
     grand_total = cur.fetchone()[0] or 1
@@ -370,12 +221,10 @@ def write_output(
                 GROUP BY motif, reverse_comp
                 """)
 
-
     cur.execute("CREATE INDEX idx_agg_motif ON agg_temp(motif)")
-
     conn.commit()
-    cur = conn.cursor()
 
+    cur = conn.cursor()
     query = """
             SELECT a.motif,
                    a.total_repeats,
@@ -405,7 +254,7 @@ def write_output(
     if close_conn:
         conn.close()
 
-@profile
+
 def main():
     print("Starting processing...")
 
@@ -435,15 +284,16 @@ def main():
 
     starttime = time.time()
     with ProcessPoolExecutor(args.workers) as executor:
-        print("Processing FASTA in chunks...")
-
+        print(f"Processing FASTA in chunks with {args.workers} workers...")
         futures = set()
 
         for chunk in equal_fasta_chunks(args.fasta, args.chunk_size):
 
+            lightweight_chunk = [(rec.id, str(rec.seq)) for rec in chunk]
+
             future = executor.submit(
                 worker_process_chunk,
-                chunk,
+                lightweight_chunk,
                 args.min_repeats,
                 args.max_repeats,
                 args.motive_size,
@@ -460,6 +310,7 @@ def main():
                             rows,
                         )
                         chunk_counter += 1
+
                 if chunk_counter >= 20:
                     conn.commit()
                     chunk_counter = 0
@@ -473,10 +324,13 @@ def main():
                 )
 
         conn.commit()
-    endtime = time.time()
 
-    print(f"Writing results to {args.output} ... {endtime - starttime}")
+    endtime = time.time()
+    print(f"Extraction finished in {endtime - starttime:.2f}s")
+
+    print(f"Writing results to {args.output}...")
     write_output(conn, args.output)
+
     conn.close()
     os.remove(tmp_path)
 
