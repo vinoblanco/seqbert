@@ -451,7 +451,7 @@ def main():
             futures.add(future)
 
             if len(futures) >= MAX_IN_FLIGHT:
-                done, future = wait(futures, return_when=FIRST_COMPLETED)
+                done, futures = wait(futures, return_when=FIRST_COMPLETED)
                 for d in done:
                     rows = d.result()
                     if rows:
@@ -460,7 +460,6 @@ def main():
                             rows,
                         )
                         chunk_counter += 1
-                    futures.remove(d)
                 if chunk_counter >= 20:
                     conn.commit()
                     chunk_counter = 0
