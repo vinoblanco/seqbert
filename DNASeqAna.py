@@ -7,13 +7,14 @@ import psutil
 import csv
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from Bio import SeqIO
-from typing import List, Iterator, Union, Dict, Optional
+from typing import List, Iterator, Union, Dict, Optional, Any
 from itertools import islice
 
 # try:
 #     import psutil
 # except ImportError:
 #     psutil = None
+
 
 class Node:
     def __init__(self, data):
@@ -23,6 +24,7 @@ class Node:
         """
         self.data = data
         self.next = None
+
 
 class LinkedList:
     def __init__(self):
@@ -80,6 +82,7 @@ class LinkedList:
             yield node, node.next
             node = node.next
 
+
 def _get_available_memory_bytes() -> int:
     """
     Returns the available RAM in bytes. Prefers psutil if installed,
@@ -87,7 +90,7 @@ def _get_available_memory_bytes() -> int:
     """
     if psutil:
         return int(psutil.virtual_memory().available)
-    #Fallback for Linux
+    # Fallback for Linux
     meminfo_path = "/proc/meminfo"
     if os.path.exists(meminfo_path):
         with open(meminfo_path, "r") as f:
@@ -96,11 +99,15 @@ def _get_available_memory_bytes() -> int:
                     parts = line.split()
                     # value is in kB
                     return int(parts[1]) * 1024
-    #Last resort: assume 256 MB available
+    # Last resort: assume 256 MB available
     return 256 * 1024 * 1024
 
+
 def fasta_in_chunks(
-        fasta_path: str,max_ram_mb: int = None,ram_fraction: float = 0.15,avg_bytes_per_base: float = 1.5
+    fasta_path: str,
+    max_ram_mb: int = None,
+    ram_fraction: float = 0.15,
+    avg_bytes_per_base: float = 1.5,
 ) -> Iterator[List]:
     """
     Returns lists of SeqRecord objects sized according to available RAM.
@@ -156,6 +163,7 @@ def equal_fasta_chunks(path, chunk_size=5000):
                 break
             yield chunk
 
+
 def process_sequence(seq_str: str):
     """
     In this method, a dictionary is created, which is populated with dinucleotide as keys and their occurrences as
@@ -163,11 +171,13 @@ def process_sequence(seq_str: str):
     :param seq_str: the sequence for which the dict is created
     :return: the dictionary
     """
-    dinucleotides: Dict[str, Optional[LinkedList]] = \
-        {''.join(kombi): None for kombi in itertools.product(['A','C','G','T'], repeat=2)}
+    dinucleotides: Dict[str, Optional[LinkedList]] = {
+        "".join(kombi): None
+        for kombi in itertools.product(["A", "C", "G", "T"], repeat=2)
+    }
 
     for i in range(len(seq_str) - 1):
-        key = str(seq_str[i:i+2])
+        key = str(seq_str[i : i + 2])
         if dinucleotides[key] is None:
             ll = LinkedList()
             dinucleotides[key] = ll
@@ -177,8 +187,14 @@ def process_sequence(seq_str: str):
 
     return dinucleotides
 
+
 def statistical_repeats(
-        dinucleotides: dict, seq_str: str, seq_id: int, min_repeats: int, max_repeats: int, motive_size:int
+    dinucleotides: dict,
+    seq_str: str,
+    seq_id: int,
+    min_repeats: int,
+    max_repeats: int,
+    motive_size: int,
 ):
     """
     Evaluates the dictionary and writes the found repeats to a database
@@ -195,12 +211,22 @@ def statistical_repeats(
     for key, value in dinucleotides.items():
         if value is None or value.length() < min_repeats:
             continue
-        for start, period, occurrences in search_motif(value, seq_str, motive_size, covered):
+        for start, period, occurrences in search_motif(
+            value, seq_str, motive_size, covered
+        ):
             if min_repeats <= occurrences <= max_repeats:
                 end = start + period * occurrences
-                motif = str(canonical_dna_motif(seq_str[start:start + period]))
+                motif = str(canonical_dna_motif(seq_str[start : start + period]))
                 if end <= len(seq_str):
-                    repeats.append((seq_id, motif, period, occurrences, canonical_dna_motif(reverse_complement(motif))))
+                    repeats.append(
+                        (
+                            seq_id,
+                            motif,
+                            period,
+                            occurrences,
+                            canonical_dna_motif(reverse_complement(motif)),
+                        )
+                    )
     return repeats
 
 
@@ -238,6 +264,7 @@ def calculate_difference(ll: LinkedList, motive_size: int):
     if counter:
         yield counter, start
 
+
 def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytearray):
     """
     Finds motifs in the sequence based on the linked list with the occurrences of a dinucleotide
@@ -257,14 +284,7 @@ def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytear
         # If one of the two positions has already been considered, skip it
         if covered[n.data] or covered[n1.data]:
             # If a run is already active, end it and start a new one
-            if run_period is not None and run_occurrences >= 2:
-                start = run_start
-                end = run_start + run_period * run_occurrences
-                # If the run is not in an already considered part of the sequence, yield and mark it
-                if not any(covered[i] for i in range(start, min(end, len(covered)))):
-                    for i in range(start, min(end, len(covered))):
-                        covered[i] = 1
-                    yield run_start, run_period, run_occurrences
+            yield from yield_run(covered, run_occurrences, run_period, run_start)
             run_period = None
             run_start = None
             run_occurrences = 1
@@ -275,13 +295,7 @@ def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytear
 
         # Termination condition for motifs that are too short
         if current < motive_size:
-            if run_period is not None and run_occurrences >= 2:
-                start = run_start
-                end = run_start + run_period * run_occurrences
-                if not any(covered[i] for i in range(start, min(end, len(covered)))):
-                    for i in range(start, min(end, len(covered))):
-                        covered[i] = 1
-                    yield run_start, run_period, run_occurrences
+            yield from yield_run(covered, run_occurrences, run_period, run_start)
             run_period = None
             run_start = None
             run_occurrences = 1
@@ -289,18 +303,12 @@ def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytear
             continue
 
         # extract motifs for comparison
-        motif_n = seq_str[n.data:n.data + current]
-        motif_n1 = seq_str[n1.data:n1.data + current]
+        motif_n = seq_str[n.data : n.data + current]
+        motif_n1 = seq_str[n1.data : n1.data + current]
 
         # Termination condition for incomplete motifs at the end of the sequence
         if len(motif_n) != current or len(motif_n1) != current:
-            if run_period is not None and run_occurrences >= 2:
-                start = run_start
-                end = run_start + run_period * run_occurrences
-                if not any(covered[i] for i in range(start, min(end, len(covered)))):
-                    for i in range(start, min(end, len(covered))):
-                        covered[i] = 1
-                    yield run_start, run_period, run_occurrences
+            yield from yield_run(covered, run_occurrences, run_period, run_start)
             run_period = None
             run_start = None
             run_occurrences = 1
@@ -331,13 +339,7 @@ def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytear
             # End the run and start a new run if the following motifs match
             else:
                 # End the run
-                if run_occurrences >= 2:
-                    start = run_start
-                    end = run_start + run_period * run_occurrences
-                    if not any(covered[i] for i in range(start, min(end, len(covered)))):
-                        for i in range(start, min(end, len(covered))):
-                            covered[i] = 1
-                        yield run_start, run_period, run_occurrences
+                yield from yield_run(covered, run_occurrences, run_period, run_start)
                 # new run if motifs match
                 if motif_n == motif_n1:
                     run_period = current
@@ -351,6 +353,10 @@ def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytear
                     run_motif = None
 
     # Output the run from the last pass
+    yield from yield_run(covered, run_occurrences, run_period, run_start)
+
+
+def yield_run(covered: bytearray, run_occurrences: int, run_period: Any | None, run_start: Any | None):
     if run_period is not None and run_occurrences >= 2:
         start = run_start
         end = run_start + run_period * run_occurrences
@@ -358,6 +364,7 @@ def search_motif(ll: LinkedList, seq_str: str, motive_size: int, covered: bytear
             for i in range(start, min(end, len(covered))):
                 covered[i] = 1
             yield run_start, run_period, run_occurrences
+
 
 def reverse_complement(seq: str):
     """
@@ -367,6 +374,7 @@ def reverse_complement(seq: str):
     """
     return seq.translate(str.maketrans("ACGT", "TGCA"))[::-1]
 
+
 def canonical_dna_motif(seq: str):
     """
     Sorts a sequence lexicographically and returns the smallest result
@@ -375,6 +383,7 @@ def canonical_dna_motif(seq: str):
     """
     candidates = [seq[i:] + seq[:i] for i in range(len(seq))]
     return min(candidates)
+
 
 def worker_process_chunk(records, min_repeats, max_repeats, motive_size):
     """
@@ -388,11 +397,16 @@ def worker_process_chunk(records, min_repeats, max_repeats, motive_size):
     rows = []
     for rec_id, seq_str in records:
         base_tuple = process_sequence(seq_str)
-        repeats = statistical_repeats(base_tuple, seq_str, rec_id , min_repeats, max_repeats, motive_size)
+        repeats = statistical_repeats(
+            base_tuple, seq_str, rec_id, min_repeats, max_repeats, motive_size
+        )
         rows.extend(repeats)
     return rows
 
-def write_output(db: Union[str, sqlite3.Connection], output_path: str = "output.txt") -> None:
+
+def write_output(
+    db: Union[str, sqlite3.Connection], output_path: str = "output.txt"
+) -> None:
     """
     Writes the found repeats from the database to a text file.
     :param output_path: Path to the output file.
@@ -406,38 +420,40 @@ def write_output(db: Union[str, sqlite3.Connection], output_path: str = "output.
         conn = db
 
     cur = conn.cursor()
-    cur.execute("WITH aggregated AS ("
-                "SELECT motif, "
-                "SUM(repeat) AS total_repeats, "
-                "COUNT(seq_number) AS occurrences, "
-                "ROUND(SUM(repeat) * 1.0 / SUM(SUM(repeat)) OVER (), 2) AS proportion, "
-                "reverse_comp "
-                "FROM repeats "
-                "GROUP BY motif, reverse_comp"
-            "), paired AS ("
-                "SELECT a.motif, "
-                "a.total_repeats, "
-                "a.occurrences, "
-                "a.proportion, "
-                "a.reverse_comp, "
-                #"b.motif AS rc_motif, "
-                "b.total_repeats AS rc_total_repeats, "
-                "b.occurrences AS rc_occurrences, "
-                "b.proportion AS rc_proportion, "
-                "(a.total_repeats + COALESCE(b.total_repeats, 0)) AS combined_repeats "
-                "FROM aggregated a "
-                "LEFT JOIN aggregated b ON a.reverse_comp = b.motif "
-                "WHERE a.reverse_comp IS NOT NULL "
-                "AND (a.total_repeats > COALESCE(b.total_repeats, 0) "
-                "OR (a.total_repeats = COALESCE(b.total_repeats, 0) AND a.motif < b.motif))"
-            ") "
-            "SELECT *, "
-            "ROUND(combined_repeats * 1.0 / SUM(combined_repeats) OVER (), 2) "
-            "AS combined_proportion "
-            "FROM paired "
-            "ORDER BY combined_proportion DESC")
+    cur.execute(
+        "WITH aggregated AS ("
+        "SELECT motif, "
+        "SUM(repeat) AS total_repeats, "
+        "COUNT(seq_number) AS occurrences, "
+        "ROUND(SUM(repeat) * 1.0 / SUM(SUM(repeat)) OVER (), 2) AS proportion, "
+        "reverse_comp "
+        "FROM repeats "
+        "GROUP BY motif, reverse_comp"
+        "), paired AS ("
+        "SELECT a.motif, "
+        "a.total_repeats, "
+        "a.occurrences, "
+        "a.proportion, "
+        "a.reverse_comp, "
+        # "b.motif AS rc_motif, "
+        "b.total_repeats AS rc_total_repeats, "
+        "b.occurrences AS rc_occurrences, "
+        "b.proportion AS rc_proportion, "
+        "(a.total_repeats + COALESCE(b.total_repeats, 0)) AS combined_repeats "
+        "FROM aggregated a "
+        "LEFT JOIN aggregated b ON a.reverse_comp = b.motif "
+        "WHERE a.reverse_comp IS NOT NULL "
+        "AND (a.total_repeats > COALESCE(b.total_repeats, 0) "
+        "OR (a.total_repeats = COALESCE(b.total_repeats, 0) AND a.motif < b.motif))"
+        ") "
+        "SELECT *, "
+        "ROUND(combined_repeats * 1.0 / SUM(combined_repeats) OVER (), 2) "
+        "AS combined_proportion "
+        "FROM paired "
+        "ORDER BY combined_proportion DESC"
+    )
 
-    with open(output_path, "w", newline='') as csv_file:
+    with open(output_path, "w", newline="") as csv_file:
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow([i[0] for i in cur.description])
         csv_writer.writerows(cur)
@@ -445,25 +461,54 @@ def write_output(db: Union[str, sqlite3.Connection], output_path: str = "output.
     if close_conn:
         conn.close()
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Finds and saves periodic repeats in DNA sequences from a FASTA file.")
+    parser = argparse.ArgumentParser(
+        description="Finds and saves periodic repeats in DNA sequences from a FASTA file."
+    )
     parser.add_argument("fasta", help="Path to the input FASTA file")
-    parser.add_argument("-m", "--motive_size", type=int, default=4,
-                        help="Minimum size of the motif (default: 4)")
-    parser.add_argument("-l", "--min_repeats", type=int, default=3,
-                        help="Minimum number of repetitions (default: 3)")
-    parser.add_argument("-u", "--max_repeats", type=int, default=10,
-                        help="Maximum number of repetitions (default: 10)")
-    parser.add_argument("-o", "--output", type=str, default="output.csv",
-                        help="Path to the output file (default: output.csv)")
-    parser.add_argument("-w", "--workers", type=int, default=4,
-                        help="Number of parallel processes (default: 4)")
+    parser.add_argument(
+        "-m",
+        "--motive_size",
+        type=int,
+        default=4,
+        help="Minimum size of the motif (default: 4)",
+    )
+    parser.add_argument(
+        "-l",
+        "--min_repeats",
+        type=int,
+        default=3,
+        help="Minimum number of repetitions (default: 3)",
+    )
+    parser.add_argument(
+        "-u",
+        "--max_repeats",
+        type=int,
+        default=10,
+        help="Maximum number of repetitions (default: 10)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default="output.csv",
+        help="Path to the output file (default: output.csv)",
+    )
+    parser.add_argument(
+        "-w",
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of parallel processes (default: 4)",
+    )
     args = parser.parse_args()
 
     print("Starting processing...")
 
-    tmp = tempfile.NamedTemporaryFile(suffix=".db")
-    conn = sqlite3.connect(tmp.name)
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
+    os.close(tmp_fd)
+    conn = sqlite3.connect(tmp_path)
 
     cur = conn.cursor()
     cur.execute("""
@@ -486,7 +531,7 @@ if __name__ == "__main__":
         futures = set()
 
         for chunk in equal_fasta_chunks(args.fasta):
-        #for chunk in fasta_in_chunks(args.fasta):
+            # for chunk in fasta_in_chunks(args.fasta):
             lightweight = [(rec.id, str(rec.seq)) for rec in chunk]
 
             future = executor.submit(
@@ -522,4 +567,4 @@ if __name__ == "__main__":
     print("Writing results to " + args.output + "...")
     write_output(conn, args.output)
     conn.close()
-    tmp.close()
+    os.remove(tmp_path)
