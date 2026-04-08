@@ -4,10 +4,13 @@ import tempfile
 import os
 import argparse
 import csv
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from Bio import SeqIO
 from typing import Union, Dict, Optional, Any
 from itertools import islice
+
+from line_profiler import profile
 
 
 class Node:
@@ -351,38 +354,46 @@ def write_output(
     cur.execute("CREATE INDEX idx_motif ON repeats (motif)")
     conn.commit()
     cur = conn.cursor()
-    cur.execute(
-        "WITH aggregated AS ("
-        "SELECT motif, "
-        "SUM(repeat) AS total_repeats, "
-        "COUNT(seq_number) AS occurrences, "
-        "ROUND(SUM(repeat) * 1.0 / SUM(SUM(repeat)) OVER (), 2) AS proportion, "
-        "reverse_comp "
-        "FROM repeats "
-        "GROUP BY motif, reverse_comp"
-        "), paired AS ("
-        "SELECT a.motif, "
-        "a.total_repeats, "
-        "a.occurrences, "
-        "a.proportion, "
-        "a.reverse_comp, "
-        # "b.motif AS rc_motif, "
-        "b.total_repeats AS rc_total_repeats, "
-        "b.occurrences AS rc_occurrences, "
-        "b.proportion AS rc_proportion, "
-        "(a.total_repeats + COALESCE(b.total_repeats, 0)) AS combined_repeats "
-        "FROM aggregated a "
-        "LEFT JOIN aggregated b ON a.reverse_comp = b.motif "
-        "WHERE a.reverse_comp IS NOT NULL "
-        "AND (a.total_repeats > COALESCE(b.total_repeats, 0) "
-        "OR (a.total_repeats = COALESCE(b.total_repeats, 0) AND a.motif < b.motif))"
-        ") "
-        "SELECT *, "
-        "ROUND(combined_repeats * 1.0 / SUM(combined_repeats) OVER (), 2) "
-        "AS combined_proportion "
-        "FROM paired "
-        "ORDER BY combined_proportion DESC"
-    )
+    cur.execute("SELECT SUM(repeat) FROM repeats")
+    grand_total = cur.fetchone()[0] or 1
+
+    cur.execute("""
+                CREATE
+                TEMP TABLE agg_temp AS
+                SELECT motif,
+                       SUM(repeat)       AS total_repeats,
+                       COUNT(seq_number) AS occurrences,
+                       reverse_comp
+                FROM repeats
+                GROUP BY motif, reverse_comp
+                """)
+
+
+    cur.execute("CREATE INDEX idx_agg_motif ON agg_temp(motif)")
+
+    conn.commit()
+    cur = conn.cursor()
+
+    query = """
+            SELECT a.motif,
+                   a.total_repeats,
+                   a.occurrences,
+                   ROUND(a.total_repeats * 1.0 / ?, 2)                                  AS proportion,
+                   a.reverse_comp,
+                   b.total_repeats                                                      AS rc_total_repeats,
+                   b.occurrences                                                        AS rc_occurrences,
+                   ROUND(b.total_repeats * 1.0 / ?, 2)                                  AS rc_proportion,
+                   (a.total_repeats + COALESCE(b.total_repeats, 0))                     AS combined_repeats,
+                   ROUND((a.total_repeats + COALESCE(b.total_repeats, 0)) * 1.0 / ?, 2) AS combined_proportion
+            FROM agg_temp a
+                     LEFT JOIN agg_temp b ON a.reverse_comp = b.motif
+            WHERE a.reverse_comp IS NOT NULL
+              AND (a.total_repeats > COALESCE(b.total_repeats, 0)
+                OR (a.total_repeats = COALESCE(b.total_repeats, 0) AND a.motif < b.motif))
+            ORDER BY combined_proportion DESC \
+            """
+
+    cur.execute(query, (grand_total, grand_total, grand_total))
 
     with open(output_path, "w", newline="") as csv_file:
         csv_writer = csv.writer(csv_file)
@@ -391,6 +402,78 @@ def write_output(
 
     if close_conn:
         conn.close()
+
+@profile
+def main():
+    print("Starting processing...")
+
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
+    os.close(tmp_fd)
+    conn = sqlite3.connect(tmp_path)
+
+    cur = conn.cursor()
+    cur.execute("PRAGMA synchronous = OFF;")
+    cur.execute("PRAGMA journal_mode = MEMORY;")
+    cur.execute("PRAGMA temp_store = MEMORY;")
+    cur.execute("""
+                CREATE TABLE repeats
+                (
+                    seq_number   text    NOT NULL,
+                    motif        text    NOT NULL,
+                    period integer NOT NULL,
+                    repeat       integer NOT NULL,
+                    reverse_comp text    NOT NULL
+                )
+                """)
+
+    conn.commit()
+
+    MAX_IN_FLIGHT = args.workers * 2
+
+    starttime = time.time()
+    with ProcessPoolExecutor(args.workers) as executor:
+        print("Processing FASTA in chunks...")
+
+        futures = set()
+
+        for chunk in equal_fasta_chunks(args.fasta, args.chunk_size):
+            lightweight = [(rec.id, str(rec.seq)) for rec in chunk]
+
+            future = executor.submit(
+                worker_process_chunk,
+                lightweight,
+                args.min_repeats,
+                args.max_repeats,
+                args.motive_size,
+            )
+            futures.add(future)
+
+            if len(futures) >= MAX_IN_FLIGHT:
+                done = next(as_completed(futures))
+                futures.remove(done)
+
+                rows = done.result()
+                if rows:
+                    cur.executemany(
+                        "INSERT INTO repeats (seq_number, motif, period, repeat, reverse_comp) VALUES (?,?,?,?,?)",
+                        rows,
+                    )
+
+        for future in as_completed(futures):
+            rows = future.result()
+            if rows:
+                cur.executemany(
+                    "INSERT INTO repeats (seq_number, motif, period, repeat, reverse_comp) VALUES (?,?,?,?,?)",
+                    rows,
+                )
+
+        conn.commit()
+    endtime = time.time()
+
+    print(f"Writing results to {args.output} ... {endtime - starttime}")
+    write_output(conn, args.output)
+    conn.close()
+    os.remove(tmp_path)
 
 
 if __name__ == "__main__":
@@ -442,69 +525,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    print("Starting processing...")
-
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
-    os.close(tmp_fd)
-    conn = sqlite3.connect(tmp_path)
-
-    cur = conn.cursor()
-    cur.execute("PRAGMA synchronous = OFF;")
-    cur.execute("PRAGMA journal_mode = MEMORY;")
-    cur.execute("PRAGMA temp_store = MEMORY;")
-    cur.execute("""
-    CREATE TABLE repeats (
-        seq_number text NOT NULL,
-        motif text NOT NULL,
-        period integer NOT NULL,
-        repeat integer NOT NULL,
-        reverse_comp text NOT NULL)
-    """)
-
-
-    conn.commit()
-
-    MAX_IN_FLIGHT = args.workers * 2
-
-    with ProcessPoolExecutor(args.workers) as executor:
-        print("Processing FASTA in chunks...")
-
-        futures = set()
-
-        for chunk in equal_fasta_chunks(args.fasta, args.chunk_size):
-            lightweight = [(rec.id, str(rec.seq)) for rec in chunk]
-
-            future = executor.submit(
-                worker_process_chunk,
-                lightweight,
-                args.min_repeats,
-                args.max_repeats,
-                args.motive_size,
-            )
-            futures.add(future)
-
-            if len(futures) >= MAX_IN_FLIGHT:
-                done = next(as_completed(futures))
-                futures.remove(done)
-
-                rows = done.result()
-                if rows:
-                    cur.executemany(
-                        "INSERT INTO repeats (seq_number, motif, period, repeat, reverse_comp) VALUES (?,?,?,?,?)",
-                        rows,
-                    )
-
-        for future in as_completed(futures):
-            rows = future.result()
-            if rows:
-                cur.executemany(
-                    "INSERT INTO repeats (seq_number, motif, period, repeat, reverse_comp) VALUES (?,?,?,?,?)",
-                    rows,
-                )
-
-        conn.commit()
-
-    print("Writing results to " + args.output + "...")
-    write_output(conn, args.output)
-    conn.close()
-    os.remove(tmp_path)
+    main()
