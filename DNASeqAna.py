@@ -77,7 +77,7 @@ class LinkedList:
             node = node.next
 
 
-def equal_fasta_chunks(path, chunk_size=5000):
+def equal_fasta_chunks(path, chunk_size):
     with open(path) as handle:
         records = SeqIO.parse(handle, "fasta")
         while True:
@@ -348,6 +348,9 @@ def write_output(
         conn = db
 
     cur = conn.cursor()
+    cur.execute("CREATE INDEX idx_motif ON repeats (motif)")
+    conn.commit()
+    cur = conn.cursor()
     cur.execute(
         "WITH aggregated AS ("
         "SELECT motif, "
@@ -446,6 +449,9 @@ if __name__ == "__main__":
     conn = sqlite3.connect(tmp_path)
 
     cur = conn.cursor()
+    cur.execute("PRAGMA synchronous = OFF;")
+    cur.execute("PRAGMA journal_mode = MEMORY;")
+    cur.execute("PRAGMA temp_store = MEMORY;")
     cur.execute("""
     CREATE TABLE repeats (
         seq_number text NOT NULL,
@@ -455,7 +461,7 @@ if __name__ == "__main__":
         reverse_comp text NOT NULL)
     """)
 
-    cur.execute("CREATE INDEX idx_motif ON repeats (motif)")
+
     conn.commit()
 
     MAX_IN_FLIGHT = args.workers * 2
@@ -465,8 +471,7 @@ if __name__ == "__main__":
 
         futures = set()
 
-        for chunk in equal_fasta_chunks(args.fasta):
-            # for chunk in fasta_in_chunks(args.fasta):
+        for chunk in equal_fasta_chunks(args.fasta, args.chunk_size):
             lightweight = [(rec.id, str(rec.seq)) for rec in chunk]
 
             future = executor.submit(
