@@ -5,7 +5,7 @@ import os
 import argparse
 import csv
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from Bio import SeqIO
 from typing import Union, Dict, Optional, Any
 from itertools import islice
@@ -316,17 +316,19 @@ def canonical_dna_motif(seq: str):
     return min(candidates)
 
 
-def worker_process_chunk(records, min_repeats, max_repeats, motive_size):
+def worker_process_chunk(chunk, min_repeats, max_repeats, motive_size):
     """
     Prepares the data for processing in a process
-    :param records: Sequence records only with id and sequence string
+    :param chunk: Sequence records only with id and sequence string
     :param min_repeats: minimum number of repetitions
     :param max_repeats: maximum number of repetitions
     :param motive_size: minimum motif size
     :return: data
     """
     rows = []
-    for rec_id, seq_str in records:
+    for rec in chunk:
+        seq_str = str(rec.seq)
+        rec_id = rec.id
         base_tuple = process_sequence(seq_str)
         repeats = statistical_repeats(
             base_tuple, seq_str, rec_id, min_repeats, max_repeats, motive_size
@@ -429,6 +431,7 @@ def main():
     conn.commit()
 
     MAX_IN_FLIGHT = args.workers * 2
+    chunk_counter = 0
 
     starttime = time.time()
     with ProcessPoolExecutor(args.workers) as executor:
@@ -437,11 +440,10 @@ def main():
         futures = set()
 
         for chunk in equal_fasta_chunks(args.fasta, args.chunk_size):
-            lightweight = [(rec.id, str(rec.seq)) for rec in chunk]
 
             future = executor.submit(
                 worker_process_chunk,
-                lightweight,
+                chunk,
                 args.min_repeats,
                 args.max_repeats,
                 args.motive_size,
@@ -449,15 +451,18 @@ def main():
             futures.add(future)
 
             if len(futures) >= MAX_IN_FLIGHT:
-                done = next(as_completed(futures))
-                futures.remove(done)
-
-                rows = done.result()
-                if rows:
-                    cur.executemany(
-                        "INSERT INTO repeats (seq_number, motif, period, repeat, reverse_comp) VALUES (?,?,?,?,?)",
-                        rows,
-                    )
+                done, futures = wait(futures, return_when=FIRST_COMPLETED)
+                for d in done:
+                    rows = d.result()
+                    if rows:
+                        cur.executemany(
+                            "INSERT INTO repeats (seq_number, motif, period, repeat, reverse_comp) VALUES (?,?,?,?,?)",
+                            rows,
+                        )
+                        chunk_counter += 1
+                if chunk_counter >= 20:
+                    conn.commit()
+                    chunk_counter = 0
 
         for future in as_completed(futures):
             rows = future.result()
