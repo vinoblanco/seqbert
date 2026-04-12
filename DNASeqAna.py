@@ -1,4 +1,3 @@
-import itertools
 import sqlite3
 import tempfile
 import os
@@ -8,13 +7,20 @@ import time
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from Bio import SeqIO
-from typing import Union, Dict, Optional, Any
+from typing import Union, Any
 from itertools import islice
 
 DNA_TRANS_TABLE = str.maketrans("ACGT", "TGCA")
 
 
 def equal_fasta_chunks(path, chunk_size):
+    """
+    Generator that yields chunks of FASTA records from the given file path.
+    Each chunk contains a specified number of records, allowing for memory-efficient processing of large FASTA files.
+    :param path: the path to the FASTA file
+    :param chunk_size: the number of records in each chunk
+    :return: a generator yielding lists of FASTA records
+    """
     with open(path) as handle:
         records = SeqIO.parse(handle, "fasta")
         while True:
@@ -27,23 +33,24 @@ def equal_fasta_chunks(path, chunk_size):
 def process_sequence(seq_str: str):
     """
     Creates a dictionary populated with dinucleotides as keys and their occurrences as values.
-    OPTIMIZATION: Uses built-in defaultdict and native C-arrays (lists) for instant appends.
+    :param seq_str: the sequence as a string
+    :return: a dictionary with dinucleotides as keys and their occurrences as values
     """
     dinucleotides = defaultdict(list)
 
     for i in range(len(seq_str) - 1):
-        dinucleotides[seq_str[i: i + 2]].append(i)
+        dinucleotides[seq_str[i : i + 2]].append(i)
 
     return dinucleotides
 
 
 def statistical_repeats(
-        dinucleotides: dict,
-        seq_str: str,
-        seq_id: int,
-        min_repeats: int,
-        max_repeats: int,
-        motive_size: int,
+    dinucleotides: dict,
+    seq_str: str,
+    seq_id: int,
+    min_repeats: int,
+    max_repeats: int,
+    motive_size: int,
 ):
     """
     Evaluates the dictionary and writes the found repeats to a database
@@ -63,11 +70,11 @@ def statistical_repeats(
             continue
 
         for start, period, occurrences in search_motif(
-                positions, seq_str, motive_size, covered
+            positions, seq_str, motive_size, covered
         ):
             if min_repeats <= occurrences <= max_repeats:
                 end = start + period * occurrences
-                motif = str(canonical_dna_motif(seq_str[start: start + period]))
+                motif = str(canonical_dna_motif(seq_str[start : start + period]))
                 if end <= len(seq_str):
                     repeats.append(
                         (
@@ -82,6 +89,14 @@ def statistical_repeats(
 
 
 def search_motif(positions: list, seq_str: str, motive_size: int, covered: bytearray):
+    """
+    Searches for motifs in the given positions and yields the start, period and number of occurrences of each motif found.
+    :param positions: the positions to search for motifs
+    :param seq_str: the sequence as a string
+    :param motive_size: minimum motif size
+    :param covered: a bytearray to mark positions that are already covered by found motifs
+    :return: a generator yielding the start, period and number of occurrences of each motif found
+    """
     run_period = None
     run_start = None
     run_occurrences = 1
@@ -107,8 +122,8 @@ def search_motif(positions: list, seq_str: str, motive_size: int, covered: bytea
             run_motif = None
             continue
 
-        motif_n = seq_str[n: n + current]
-        motif_n1 = seq_str[n1: n1 + current]
+        motif_n = seq_str[n : n + current]
+        motif_n1 = seq_str[n1 : n1 + current]
 
         if len(motif_n) != current or len(motif_n1) != current:
             yield from yield_run(covered, run_occurrences, run_period, run_start)
@@ -149,11 +164,19 @@ def search_motif(positions: list, seq_str: str, motive_size: int, covered: bytea
 
 
 def yield_run(
-        covered: bytearray,
-        run_occurrences: int,
-        run_period: Any | None,
-        run_start: Any | None,
+    covered: bytearray,
+    run_occurrences: int,
+    run_period: Any | None,
+    run_start: Any | None,
 ):
+    """
+    Yields the start, period and number of occurrences of a motif if it meets the criteria and marks the positions as covered.
+    :param covered: a bytearray to mark positions that are already covered by found motifs
+    :param run_occurrences: the number of occurrences of the current motif
+    :param run_period: the period of the current motif
+    :param run_start: the start position of the current motif
+    :return: a generator yielding the start, period and number of occurrences of a motif if it meets the criteria
+    """
     if run_period is not None and run_occurrences >= 2:
         start = run_start
         end = run_start + run_period * run_occurrences
@@ -164,10 +187,20 @@ def yield_run(
 
 
 def reverse_complement(seq: str):
+    """
+    Returns the reverse complement of a DNA sequence.
+    :param seq: the DNA sequence as a string
+    :return: the reverse complement of the DNA sequence as a string
+    """
     return seq.translate(DNA_TRANS_TABLE)[::-1]
 
 
 def canonical_dna_motif(seq: str):
+    """
+    Returns the canonical form of a DNA motif by finding the lexicographically smallest rotation of the sequence.
+    :param seq: the DNA motif as a string
+    :return: the canonical form of the DNA motif as a string
+    """
     return min(seq[i:] + seq[:i] for i in range(len(seq)))
 
 
@@ -191,8 +224,13 @@ def worker_process_chunk(chunk, min_repeats, max_repeats, motive_size):
 
 
 def write_output(
-        db: Union[str, sqlite3.Connection], output_path: str = "output.csv"
+    db: Union[str, sqlite3.Connection], output_path: str = "output.csv"
 ) -> None:
+    """
+    Writes the results from the database to a CSV file, including calculations for proportions and combined repeats.
+    :param db: the database connection or path to the database file
+    :param output_path: the path to the output CSV file (default: "output.csv
+    """
     close_conn = False
     if isinstance(db, str):
         conn = sqlite3.connect(db)
