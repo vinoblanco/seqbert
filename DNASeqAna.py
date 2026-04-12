@@ -5,6 +5,7 @@ import argparse
 import csv
 import time
 from collections import defaultdict
+from compression import gzip
 from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from Bio import SeqIO
 from typing import Union, Any
@@ -21,14 +22,27 @@ def equal_fasta_chunks(path, chunk_size):
     :param chunk_size: the number of records in each chunk
     :return: a generator yielding lists of FASTA records
     """
-    with open(path) as handle:
-        records = SeqIO.parse(handle, "fasta")
-        while True:
-            chunk = list(islice(records, chunk_size))
-            if not chunk:
-                break
-            yield chunk
 
+    file_extension = os.path.splitext(path)[1].lower()
+
+    if file_extension == ".fasta":
+        with open(path) as handle:
+            records = SeqIO.parse(handle, "fasta")
+            while True:
+                chunk = list(islice(records, chunk_size))
+                if not chunk:
+                    break
+                yield chunk
+    if file_extension == ".fastq":
+        with open(path) as handle:
+            records = SeqIO.parse(handle, "fastq")
+            while True:
+                chunk = list(islice(records, chunk_size))
+                if not chunk:
+                    break
+                yield chunk
+    else:
+        raise ValueError(f"Unsupported file type: {file_extension}")
 
 def process_sequence(seq_str: str):
     """
@@ -291,7 +305,6 @@ def write_output(
 
     if close_conn:
         conn.close()
-
 
 def main():
     print("Starting processing...")
