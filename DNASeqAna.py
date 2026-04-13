@@ -109,7 +109,8 @@ def search_motif(positions: list, seq_str: str, min_motive_size: int, max_motive
     Searches for motifs in the given positions and yields the start, period and number of occurrences of each motif found.
     :param positions: the positions to search for motifs
     :param seq_str: the sequence as a string
-    :param motive_size: minimum motif size
+    :param min_motive_size: minimum motif size
+    :param max_motive_size: maximum motif size
     :param covered: a bytearray to mark positions that are already covered by found motifs
     :return: a generator yielding the start, period and number of occurrences of each motif found
     """
@@ -220,20 +221,21 @@ def canonical_dna_motif(seq: str):
     return min(seq[i:] + seq[:i] for i in range(len(seq)))
 
 
-def worker_process_chunk(chunk, min_repeats, max_repeats, motive_size):
+def worker_process_chunk(chunk, min_repeats, max_repeats, min_motive_size, max_motive_size):
     """
     Prepares the data for processing in a process
     :param chunk: Sequence records only with id and sequence string
     :param min_repeats: minimum number of repetitions
     :param max_repeats: maximum number of repetitions
-    :param motive_size: minimum motif size
+    :param min_motive_size: minimum motif size
+    :param max_motive_size: maximum motif size
     :return: data
     """
     rows = []
     for rec_id, seq_str in chunk:
         base_dict = process_sequence(seq_str)
         repeats = statistical_repeats(
-            base_dict, seq_str, rec_id, min_repeats, max_repeats, motive_size
+            base_dict, seq_str, rec_id, min_repeats, max_repeats, min_motive_size, max_motive_size
         )
         rows.extend(repeats)
     return rows
@@ -349,7 +351,8 @@ def main():
                 lightweight_chunk,
                 args.min_repeats,
                 args.max_repeats,
-                args.motive_size,
+                args.min_motive_size,
+                args.max_motive_size,
             )
             futures.add(future)
 
