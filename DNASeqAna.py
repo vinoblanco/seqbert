@@ -64,7 +64,8 @@ def statistical_repeats(
     seq_id: int,
     min_repeats: int,
     max_repeats: int,
-    motive_size: int,
+    min_motive_size: int,
+    max_motive_size: int,
 ):
     """
     Evaluates the dictionary and writes the found repeats to a database
@@ -73,7 +74,8 @@ def statistical_repeats(
     :param seq_id: the ID of the sequence
     :param min_repeats: minimum number of occurrences for it to be considered a repeat
     :param max_repeats: maximum number of occurrences for it to be considered a repeat
-    :param motive_size: minimum motif size
+    :param min_motive_size: minimum motif size
+    :param max_motive_size: maximum motif size
     :return: an array with the found repeats and their properties (Seq_ID, motif, start, period, number)
     """
     repeats = []
@@ -84,7 +86,7 @@ def statistical_repeats(
             continue
 
         for start, period, occurrences in search_motif(
-            positions, seq_str, motive_size, covered
+            positions, seq_str, min_motive_size, max_motive_size, covered
         ):
             if min_repeats <= occurrences <= max_repeats:
                 end = start + period * occurrences
@@ -102,7 +104,7 @@ def statistical_repeats(
     return repeats
 
 
-def search_motif(positions: list, seq_str: str, motive_size: int, covered: bytearray):
+def search_motif(positions: list, seq_str: str, min_motive_size: int, max_motive_size: int, covered: bytearray):
     """
     Searches for motifs in the given positions and yields the start, period and number of occurrences of each motif found.
     :param positions: the positions to search for motifs
@@ -128,7 +130,7 @@ def search_motif(positions: list, seq_str: str, motive_size: int, covered: bytea
 
         current = n1 - n
 
-        if current < motive_size:
+        if current < min_motive_size or current > max_motive_size:
             yield from yield_run(covered, run_occurrences, run_period, run_start)
             run_period = None
             run_start = None
@@ -393,10 +395,17 @@ if __name__ == "__main__":
     parser.add_argument("fasta", help="Path to the input FASTA file")
     parser.add_argument(
         "-m",
-        "--motive_size",
+        "--min_motive_size",
         type=int,
         default=4,
         help="Minimum size of the motif (default: 4)",
+    )
+    parser.add_argument(
+        "-M",
+        "--max_motive_size",
+        type=int,
+        default=15,
+        help="Maximum size of the motif (default: 15)",
     )
     parser.add_argument(
         "-l",
