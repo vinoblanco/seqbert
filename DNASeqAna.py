@@ -23,28 +23,28 @@ def equal_fasta_chunks(path, chunk_size):
     :return: a generator yielding lists of FASTA records
     """
 
-    file_extension = os.path.splitext(path)[1].lower()
+    lower_path = path.lower()
+    is_gz = lower_path.endswith(".gz")
 
-    if file_extension == ".fasta":
-        with open(path) as handle:
-            records = SeqIO.parse(handle, "fasta")
-            while True:
-                chunk = list(islice(records, chunk_size))
-                if not chunk:
-                    break
-                yield chunk
-    if file_extension == ".fastq":
-        with open(path) as handle:
-            records = SeqIO.parse(handle, "fastq")
-            while True:
-                chunk = list(islice(records, chunk_size))
-                if not chunk:
-                    break
-                yield chunk
+    if lower_path.endswith((".fasta", ".fa", ".fasta.gz", ".fa.gz")):
+        fmt = "fasta"
+    elif lower_path.endswith((".fastq", ".fq", ".fastq.gz", ".fq.gz")):
+        fmt = "fastq"
     else:
-        raise ValueError(f"Unsupported file type: {file_extension}")
+        raise ValueError(f"Unsupported file type: {path}")
 
-def process_sequence(seq_str: str):
+    opener = gzip.open if is_gz else open
+
+    with opener(path, "rt") as handle:
+        records = SeqIO.parse(handle, fmt)
+        while True:
+            chunk = list(islice(records, chunk_size))
+            if not chunk:
+                break
+            yield chunk
+
+
+def find_dinucleotides(seq_str: str):
     """
     Creates a dictionary populated with dinucleotides as keys and their occurrences as values.
     :param seq_str: the sequence as a string
@@ -58,12 +58,11 @@ def process_sequence(seq_str: str):
     return dinucleotides
 
 
-def statistical_repeats(
+def detect_repeats(
     dinucleotides: dict,
     seq_str: str,
     seq_id: int,
     min_repeats: int,
-    max_repeats: int,
     min_motive_size: int,
     max_motive_size: int,
 ):
@@ -73,7 +72,6 @@ def statistical_repeats(
     :param seq_str: the sequence of the dictionary as a string
     :param seq_id: the ID of the sequence
     :param min_repeats: minimum number of occurrences for it to be considered a repeat
-    :param max_repeats: maximum number of occurrences for it to be considered a repeat
     :param min_motive_size: minimum motif size
     :param max_motive_size: maximum motif size
     :return: an array with the found repeats and their properties (Seq_ID, motif, period, occurrences, reverse complement)
@@ -88,7 +86,7 @@ def statistical_repeats(
         for start, period, occurrences in search_motif(
             positions, seq_str, min_motive_size, max_motive_size, covered
         ):
-            if min_repeats <= occurrences <= max_repeats:
+            if min_repeats <= occurrences:
                 end = start + period * occurrences
                 motif = str(canonical_dna_motif(seq_str[start : start + period]))
                 if end <= len(seq_str):
@@ -157,10 +155,7 @@ def search_motif(positions: list, seq_str: str, min_motive_size: int, max_motive
                 run_occurrences = 2
                 run_motif = motif_n
             else:
-                run_period = None
-                run_start = None
-                run_occurrences = 1
-                run_motif = None
+                continue
         else:
             if current == run_period and motif_n1 == run_motif:
                 run_occurrences += 1
@@ -233,8 +228,8 @@ def worker_process_chunk(chunk, min_repeats, max_repeats, min_motive_size, max_m
     """
     rows = []
     for rec_id, seq_str in chunk:
-        base_dict = process_sequence(seq_str)
-        repeats = statistical_repeats(
+        base_dict = find_dinucleotides(seq_str)
+        repeats = detect_repeats(
             base_dict, seq_str, rec_id, min_repeats, max_repeats, min_motive_size, max_motive_size
         )
         rows.extend(repeats)
