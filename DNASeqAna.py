@@ -76,7 +76,7 @@ def statistical_repeats(
     :param max_repeats: maximum number of occurrences for it to be considered a repeat
     :param min_motive_size: minimum motif size
     :param max_motive_size: maximum motif size
-    :return: an array with the found repeats and their properties (Seq_ID, motif, start, period, number)
+    :return: an array with the found repeats and their properties (Seq_ID, motif, period, occurrences, reverse complement)
     """
     repeats = []
     covered = bytearray(len(seq_str))
