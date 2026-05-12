@@ -216,12 +216,11 @@ def canonical_dna_motif(seq: str):
     return min(seq[i:] + seq[:i] for i in range(len(seq)))
 
 
-def worker_process_chunk(chunk, min_repeats, max_repeats, min_motive_size, max_motive_size):
+def worker_process_chunk(chunk, min_repeats, min_motive_size, max_motive_size):
     """
     Prepares the data for processing in a process
     :param chunk: Sequence records only with id and sequence string
     :param min_repeats: minimum number of repetitions
-    :param max_repeats: maximum number of repetitions
     :param min_motive_size: minimum motif size
     :param max_motive_size: maximum motif size
     :return: data
@@ -230,7 +229,7 @@ def worker_process_chunk(chunk, min_repeats, max_repeats, min_motive_size, max_m
     for rec_id, seq_str in chunk:
         base_dict = find_dinucleotides(seq_str)
         repeats = detect_repeats(
-            base_dict, seq_str, rec_id, min_repeats, max_repeats, min_motive_size, max_motive_size
+            base_dict, seq_str, rec_id, min_repeats, min_motive_size, max_motive_size
         )
         rows.extend(repeats)
     return rows
@@ -321,7 +320,7 @@ def main():
                 (
                     seq_number   text    NOT NULL,
                     motif        text    NOT NULL,
-                    period integer NOT NULL,
+                    period       integer NOT NULL,
                     repeat       integer NOT NULL,
                     reverse_comp text    NOT NULL
                 )
@@ -345,7 +344,6 @@ def main():
                 worker_process_chunk,
                 lightweight_chunk,
                 args.min_repeats,
-                args.max_repeats,
                 args.min_motive_size,
                 args.max_motive_size,
             )
@@ -406,18 +404,11 @@ if __name__ == "__main__":
         help="Maximum size of the motif (default: 15)",
     )
     parser.add_argument(
-        "-l",
+        "-r",
         "--min_repeats",
         type=int,
         default=3,
         help="Minimum number of repetitions (default: 3)",
-    )
-    parser.add_argument(
-        "-u",
-        "--max_repeats",
-        type=int,
-        default=10,
-        help="Maximum number of repetitions (default: 10)",
     )
     parser.add_argument(
         "-o",
