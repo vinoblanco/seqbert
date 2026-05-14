@@ -41,8 +41,6 @@ Example:
 
     python3 DNASeqAna.py input.fasta -m 4 -r 3 -o output.csv
 
-The script prints progress messages, stores intermediate results in a temporary SQLite database, and writes a summarized result table to the specified output file when finished.
-
 ## Behavior and output
 
 - The script reads the input FASTA file in chunks. By default it uses a fixed-chunk helper (`equal_fasta_chunks`) which yields a fixed number of records per chunk.
@@ -62,7 +60,7 @@ The script prints progress messages, stores intermediate results in a temporary 
 
 ## Memory / performance notes
 
-- The multiprocessing approach uses `ProcessPoolExecutor` and 4 workers by default and limits the number of in-flight futures to avoid excessive memory use. You can change the number of workers by using the CLI-option `--chunk_size`.
+- The multiprocessing approach uses `ProcessPoolExecutor` and 4 workers by default and limits the number of in-flight futures to avoid excessive memory use. You can change the number of workers by using the CLI-option `--workers`.
 
 ## Limitations & TODOs
 
