@@ -114,26 +114,26 @@ def search_motif(positions: list, seq_str: str, min_motive_size: int, max_motive
     """
     run_period = None
     run_start = None
-    run_occurrences = 1
+    run_repeats = 1
     run_motif = None
 
     for n, n1 in zip(positions, positions[1:]):
 
         if covered[n] or covered[n1]:
-            yield from yield_run(covered, run_occurrences, run_period, run_start)
+            yield from yield_run(covered, run_repeats, run_period, run_start)
             run_period = None
             run_start = None
-            run_occurrences = 1
+            run_repeats = 1
             run_motif = None
             continue
 
         current = n1 - n
 
         if current < min_motive_size or current > max_motive_size:
-            yield from yield_run(covered, run_occurrences, run_period, run_start)
+            yield from yield_run(covered, run_repeats, run_period, run_start)
             run_period = None
             run_start = None
-            run_occurrences = 1
+            run_repeats = 1
             run_motif = None
             continue
 
@@ -141,10 +141,10 @@ def search_motif(positions: list, seq_str: str, min_motive_size: int, max_motive
         motif_n1 = seq_str[n1 : n1 + current]
 
         if len(motif_n) != current or len(motif_n1) != current:
-            yield from yield_run(covered, run_occurrences, run_period, run_start)
+            yield from yield_run(covered, run_repeats, run_period, run_start)
             run_period = None
             run_start = None
-            run_occurrences = 1
+            run_repeats = 1
             run_motif = None
             continue
 
@@ -152,50 +152,50 @@ def search_motif(positions: list, seq_str: str, min_motive_size: int, max_motive
             if motif_n == motif_n1:
                 run_period = current
                 run_start = n
-                run_occurrences = 2
+                run_repeats = 2
                 run_motif = motif_n
             else:
                 continue
         else:
             if current == run_period and motif_n1 == run_motif:
-                run_occurrences += 1
+                run_repeats += 1
             else:
-                yield from yield_run(covered, run_occurrences, run_period, run_start)
+                yield from yield_run(covered, run_repeats, run_period, run_start)
                 if motif_n == motif_n1:
                     run_period = current
                     run_start = n
-                    run_occurrences = 2
+                    run_repeats = 2
                     run_motif = motif_n
                 else:
                     run_period = None
                     run_start = None
-                    run_occurrences = 1
+                    run_repeats = 1
                     run_motif = None
 
-    yield from yield_run(covered, run_occurrences, run_period, run_start)
+    yield from yield_run(covered, run_repeats, run_period, run_start)
 
 
 def yield_run(
     covered: bytearray,
-    run_occurrences: int,
+    run_repeats: int,
     run_period: Any | None,
     run_start: Any | None,
 ):
     """
     Yields the start, period and number of occurrences of a motif if it meets the criteria and marks the positions as covered.
     :param covered: a bytearray to mark positions that are already covered by found motifs
-    :param run_occurrences: the number of occurrences of the current motif
+    :param run_repeats: the number of occurrences of the current motif
     :param run_period: the period of the current motif
     :param run_start: the start position of the current motif
     :return: a generator yielding the start, period and number of occurrences of a motif if it meets the criteria
     """
-    if run_period is not None and run_occurrences >= 2:
+    if run_period is not None and run_repeats >= 2:
         start = run_start
-        end = run_start + run_period * run_occurrences
+        end = run_start + run_period * run_repeats
         if not any(covered[i] for i in range(start, min(end, len(covered)))):
             for i in range(start, min(end, len(covered))):
                 covered[i] = 1
-            yield run_start, run_period, run_occurrences
+            yield run_start, run_period, run_repeats
 
 
 def reverse_complement(seq: str):
@@ -330,6 +330,7 @@ def main():
 
     MAX_IN_FLIGHT = args.workers * 2
     chunk_counter = 0
+    cc = 0
 
     starttime = time.time()
     with ProcessPoolExecutor(args.workers) as executor:
@@ -362,6 +363,8 @@ def main():
 
                 if chunk_counter >= 20:
                     conn.commit()
+                    cc += 20
+                    print(f"{cc} chunks completed...")
                     chunk_counter = 0
 
         for future in as_completed(futures):
