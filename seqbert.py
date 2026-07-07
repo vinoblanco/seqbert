@@ -279,12 +279,15 @@ def write_output(
             SELECT a.motif,
                    a.total_repeats,
                    a.occurrences,
+                   (a.total_repeats / a.occurrences)                                    AS average_length,
                    ROUND(a.total_repeats * 1.0 / ?, 2)                                  AS proportion,
                    a.reverse_comp,
                    b.total_repeats                                                      AS rc_total_repeats,
                    b.occurrences                                                        AS rc_occurrences,
+                   b.total_repeats / b.occurrences                                      AS average_length,
                    ROUND(b.total_repeats * 1.0 / ?, 2)                                  AS rc_proportion,
                    (a.total_repeats + COALESCE(b.total_repeats, 0))                     AS combined_repeats,
+                   (a.occurrences + COALESCE(b.occurrences, 0))                         AS combinded_occurences,
                    ROUND((a.total_repeats + COALESCE(b.total_repeats, 0)) * 1.0 / ?, 2) AS combined_proportion
             FROM agg_temp a
                      LEFT JOIN agg_temp b ON a.reverse_comp = b.motif
