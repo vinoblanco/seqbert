@@ -66,5 +66,5 @@ Example:
 
 - The script currently focuses on dinucleotide keys as anchors for repeat detection — this is a heuristic and may miss repeats that are not captured by dinucleotide boundaries.
 - Some internal functions assume the input sequence lengths and motif sizes are reasonable; extremely long sequences or very small motif sizes may need parameter tuning.
-- The temporary database is stored in a NamedTemporaryFile — if you need a persistent DB, modify `DNASeqAna.py` to open a permanent sqlite file instead.
+- The temporary database is stored in a NamedTemporaryFile — if you need a persistent DB, modify `seqbert.py` to open a permanent sqlite file instead.
 - The script currently does not handle ambiguous bases (e.g. N) in the input sequences — these may need to be filtered or handled specially depending on your use case.

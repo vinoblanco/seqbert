@@ -14,6 +14,13 @@ from itertools import islice
 DNA_TRANS_TABLE = str.maketrans("ACGT", "TGCA")
 
 
+def normalize_sequence(seq: str) -> str:
+    """
+    Normalizes a sequence for processing.
+    """
+    return seq.upper()
+
+
 def equal_fasta_chunks(path, chunk_size):
     """
     Generator that yields chunks of FASTA records from the given file path.
@@ -76,30 +83,30 @@ def detect_repeats(
     :param max_motive_size: maximum motif size
     :return: an array with the found repeats and their properties (Seq_ID, motif, period, occurrences, reverse complement)
     """
-    repeats = []
+    tandemrepeats = []
     covered = bytearray(len(seq_str))
 
     for key, positions in dinucleotides.items():
         if len(positions) < min_repeats:
             continue
 
-        for start, period, occurrences in search_motif(
+        for start, period, repeats in search_motif(
             positions, seq_str, min_motive_size, max_motive_size, covered
         ):
-            if min_repeats <= occurrences:
-                end = start + period * occurrences
+            if min_repeats <= repeats:
+                end = start + period * repeats
                 motif = str(canonical_dna_motif(seq_str[start : start + period]))
                 if end <= len(seq_str):
-                    repeats.append(
+                    tandemrepeats.append(
                         (
                             seq_id,
                             motif,
                             period,
-                            occurrences,
+                            repeats,
                             canonical_dna_motif(reverse_complement(motif)),
                         )
                     )
-    return repeats
+    return tandemrepeats
 
 
 def search_motif(positions: list, seq_str: str, min_motive_size: int, max_motive_size: int, covered: bytearray):
@@ -227,6 +234,7 @@ def worker_process_chunk(chunk, min_repeats, min_motive_size, max_motive_size):
     """
     rows = []
     for rec_id, seq_str in chunk:
+        seq_str = normalize_sequence(seq_str)
         base_dict = find_dinucleotides(seq_str)
         repeats = detect_repeats(
             base_dict, seq_str, rec_id, min_repeats, min_motive_size, max_motive_size
@@ -236,7 +244,7 @@ def worker_process_chunk(chunk, min_repeats, min_motive_size, max_motive_size):
 
 
 def write_output(
-    db: Union[str, sqlite3.Connection], output_path: str = "output.csv"
+    db: Union[str, sqlite3.Connection], output_path: str = "output.csv", rna: bool = False
 ) -> None:
     """
     Writes the results from the database to a CSV file, including calculations for proportions and combined repeats.
@@ -275,7 +283,8 @@ def write_output(
     conn.commit()
 
     cur = conn.cursor()
-    query = """
+    if not rna:
+        query = """
             SELECT a.motif,
                    a.total_repeats,
                    a.occurrences,
@@ -296,8 +305,20 @@ def write_output(
                 OR (a.total_repeats = COALESCE(b.total_repeats, 0) AND a.motif < b.motif))
             ORDER BY combined_proportion DESC \
             """
+        cur.execute(query, (grand_total, grand_total, grand_total))
+    else:
+        query = """
+                SELECT a.motif,
+                       a.total_repeats,
+                       a.occurrences,
+                       (a.total_repeats / a.occurrences)   AS average_length,
+                       ROUND(a.total_repeats * 1.0 / ?, 2) AS proportion
+                FROM agg_temp a
+                ORDER BY proportion DESC \
+                """
+        cur.execute(query, (grand_total,))
 
-    cur.execute(query, (grand_total, grand_total, grand_total))
+
 
     with open(output_path, "w", newline="") as csv_file:
         csv_writer = csv.writer(csv_file)
@@ -383,8 +404,8 @@ def main():
     endtime = time.time()
     print(f"Extraction finished in {endtime - starttime:.2f}s")
 
+    write_output(conn, args.output, args.rna)
     print(f"Writing results to {args.output}...")
-    write_output(conn, args.output)
 
     conn.close()
     os.remove(tmp_path)
@@ -436,6 +457,11 @@ if __name__ == "__main__":
         type=int,
         default=5000,
         help="Size of each chunk (default: 5000)",
+    )
+    parser.add_argument(
+        "--rna",
+        action="store_true",
+        help="If set, the script will treat the input sequences as RNA and will not compute reverse complements.",
     )
     args = parser.parse_args()
 
