@@ -1,6 +1,6 @@
 # DNASeqAna
 
-Small Python tool to detect periodic DNA repeats (motifs) from .fastq and .fasta files. The tool parses FASTA input in chunks, builds position maps for dinucleotide tuples, detects periodic distance patterns and writes discovered repeats into a temporary SQLite database and a .csv output file.
+Small Python tool to detect tandem repeats from FASTA and FASTQ files. The tool parses the input in chunks, builds position maps for dinucleotides, detects periodic distance patterns and writes discovered repeats into a temporary SQLite database and a .csv output file.
 
 ## Features
 
@@ -35,6 +35,7 @@ CLI options:
 - `-o`, `--output` (str, default `output.csv`): path to exported tab-separated output
 - `-w`, `--workers` (int, default 4): number of worker processes for parallel processing
 - `-c`, `--chunk_size` (int, default 5000): size per chunk
+- `--rna` : output only contains tandem repeat without reverse complement statistics
 
 
 Example:
@@ -43,7 +44,7 @@ Example:
 
 ## Behavior and output
 
-- The script reads the input FASTA file in chunks. By default it uses a fixed-chunk helper (`equal_fasta_chunks`) which yields a fixed number of records per chunk.
+- The script reads the input file in chunks. By default it uses a fixed-chunk helper (`equal_fasta_chunks`) which yields a fixed number of records per chunk.
 - Each chunk is converted to a lightweight format (ID + sequence string) and submitted to a worker process.
 - Workers run `worker_process_chunk`, which calls `find_denucleotides` (builds per-dinucleotide List position maps) and `detect_repeats` (extracts repeat candidates) and returns rows to insert into the central SQLite database.
 - Database schema (created in a temporary file):
@@ -67,4 +68,3 @@ Example:
 - The script currently focuses on dinucleotide keys as anchors for repeat detection — this is a heuristic and may miss repeats that are not captured by dinucleotide boundaries.
 - Some internal functions assume the input sequence lengths and motif sizes are reasonable; extremely long sequences or very small motif sizes may need parameter tuning.
 - The temporary database is stored in a NamedTemporaryFile — if you need a persistent DB, modify `seqbert.py` to open a permanent sqlite file instead.
-- The script currently does not handle ambiguous bases (e.g. N) in the input sequences — these may need to be filtered or handled specially depending on your use case.
