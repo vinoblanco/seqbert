@@ -1,4 +1,4 @@
-# DNASeqAna
+# seqbert
 
 Small Python tool to detect tandem repeats from FASTA and FASTQ files. The tool parses the input in chunks, builds position maps for dinucleotides, detects periodic distance patterns and writes discovered repeats into a temporary SQLite database and a .csv output file.
 
